@@ -1,4 +1,6 @@
 **/**/.env
+
+# Terraform/Terragrunt
 infra/**/.terraform/
 infra/**/.terraform.lock.hcl
 *.tfstate
@@ -7,3 +9,33 @@ infra/**/.terragrunt-cache/
 **/**/.infracost
 infra/env.hcl
 
+# Next.js build output
+.next/
+out/
+
+# Node.js dependencies
+node_modules/
+
+# Environment variables
+.env*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# IDEs and text editors
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS generated files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
