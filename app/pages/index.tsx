@@ -1,4 +1,4 @@
-import {useState, useEffect, ChangeEvent, useRef} from 'react';
+import {useState, useEffect, ChangeEvent, useRef, createRef} from 'react';
 import {supabase} from '../utils/supabaseClient';
 import {Video, Tag, Thumbnail} from '../utils/supabaseClient';
 import ReactStars from 'react-rating-stars-component';
@@ -114,6 +114,7 @@ export default function Home() {
   const [newVideoRating, setNewVideoRating] = useState<number | null>(null);
   const [newThumbnailUrls, setNewThumbnailUrls] = useState<string[]>([]);
   const [newTags, setNewTags] = useState<string[]>([]);
+  const [thumbnailsPreview, setThumbnailsPreview] = useState<string[]>([]);
 
   const addVideo = async () => {
     if (newVideoTitle.length && newVideoUrl.length) {
@@ -136,14 +137,6 @@ export default function Home() {
       } else if (videoData) {
         const videoId = videoData[0].id;
 
-        // サムネイルを追加
-        await supabase.from('thumbnails').insert(
-          newThumbnailUrls.map((url) => ({
-            video_id: videoId,
-            thumbnail_path: url,
-          }))
-        );
-
         // タグを追加
         await supabase.from('tags').insert(
           newTags.map((tag) => (
@@ -151,13 +144,26 @@ export default function Home() {
           ))
         );
 
+        // upload thumbnails
+        const updatedThumbnailUrls = await uploadThumbnails(videoId);
+
+        // サムネイルの関連を追加
+        console.log("updatedThumbnailUrls", updatedThumbnailUrls)
+        await supabase.from('thumbnails').insert(
+          updatedThumbnailUrls.map((url) => ({
+            video_id: videoId,
+            thumbnail_path: url,
+          }))
+        );
+
         setNewVideoTitle('');
         setNewVideoUrl('');
         setNewVideoSortOrder(null);
         setNewVideoRating(null);
-        setNewThumbnailUrls([]);
         setNewTags([]);
         fetchVideos();
+        setNewThumbnailUrls([]);
+        setThumbnailsPreview([]);
       }
     }
   };
@@ -227,6 +233,48 @@ export default function Home() {
       return;
     }
 
+    // Delete related thumbnails Storage
+    // フォルダーを直接消せないので中身のファイルを消すために一旦全ファイル名を取得してから消す
+    const {data: thumbnails, error: thumbnailsError} = await supabase
+      .storage
+      .from("thumbnails")
+      .list(`private/thumbnails/${id}`);
+    if (thumbnailsError) {
+      console.error("Failed to fetch thumbnails:", thumbnailsError);
+      return;
+    }
+    console.log("thumbnails:", thumbnails)
+    for (const thumbnail of thumbnails) {
+      const {error: deleteThumbnailError} = await supabase
+        .storage
+        .from("thumbnails")
+        .remove([`private/thumbnails/${id}/${thumbnail.name}`]);
+      if (deleteThumbnailError) {
+        console.error("Failed to delete thumbnail:", deleteThumbnailError);
+        return;
+      }
+    }
+    const {data: deletedThumbnails, error: deleteThumbnailsError} = await supabase
+      .storage
+      .from("thumbnails")
+      .remove([`private/thumbnails/${id}/*`]);
+
+    if (deleteThumbnailsError) {
+      console.error("Failed to delete thumbnails:", deleteThumbnailsError);
+      return;
+    }
+
+    // Delete related thumbnails records
+    const {error: deleteThumbnailsRecordError} = await supabase
+      .from("thumbnails")
+      .delete()
+      .match({video_id: id});
+
+    if (deleteThumbnailsRecordError) {
+      console.error("Failed to delete thumbnails record:", deleteThumbnailsRecordError);
+      return;
+    }
+
     // Delete the video record
     const {error: deleteVideoError} = await supabase
       .from('videos')
@@ -240,38 +288,56 @@ export default function Home() {
     }
   }
 
-  async function handleThumbnailUpload(event: ChangeEvent<HTMLInputElement>) {
+  function handleThumbnailUpload(event: ChangeEvent<HTMLInputElement>) {
     if (!event.target.files || event.target.files.length === 0) {
       return;
     }
 
-    const file = event.target.files[0];
-    const filePath = `private/thumbnails/${file.name}`;
-
-    // Get the access token for the logged-in user
-    const {data: authSession} = await supabase.auth.getSession();
-    const accessToken = authSession?.session?.access_token;
-
-    console.log(accessToken)
-    if (!accessToken) {
-      console.error('User must be logged in to upload files.');
-      return;
-    }
-
-    try {
-      // Upload the file
-      const {data, error: uploadError} = await supabase.storage.from('thumbnails').upload(filePath, file, {
-        cacheControl: '3600',
-        contentType: file.type,
-        upsert: false,
-      });
-      console.log('File uploaded:', data);
-      setNewThumbnailUrls([...newThumbnailUrls, filePath]);
-    } catch (error) {
-      console.error('Failed to upload file:', error);
-    }
+    const files = Array.from(event.target.files);
+    const thumbnailsPreview = files.map((file) => URL.createObjectURL(file));
+    setThumbnailsPreview(thumbnailsPreview);
   }
 
+  async function uploadThumbnails(videoId: number): Promise<string[]> {
+    return new Promise(async (resolve) => {
+      const thumbnailInput = thumbnailInputRef.current;
+      if (!thumbnailInput || !thumbnailInput.files || thumbnailInput.files.length === 0) {
+        return;
+      }
+
+      const files = Array.from(thumbnailInput.files);
+
+      for (const file of files) {
+        const filePath = `private/thumbnails/${videoId}/${file.name}`;
+
+        // Get the access token for the logged-in user
+        const {data: authSession} = await supabase.auth.getSession();
+        const accessToken = authSession?.session?.access_token;
+        if (!accessToken) {
+          console.error("User must be logged in to upload files.");
+          return;
+        }
+
+        try {
+          // Upload the file
+          const {data, error: uploadError} = await supabase.storage.from("thumbnails").upload(filePath, file, {
+            cacheControl: "3600",
+            contentType: file.type,
+            upsert: false,
+          });
+          console.log("File uploaded:", data);
+          console.log("file path:", filePath);
+          setNewThumbnailUrls((prevUrls) => {
+            const updatedUrls = [...prevUrls, filePath];
+            resolve(updatedUrls); // Promiseを解決
+            return updatedUrls;
+          });
+        } catch (error) {
+          console.error("Failed to upload file:", error);
+        }
+      }
+    });
+  }
 
   if (!session) {
     return (<Auth supabaseClient={supabase} appearance={{theme: ThemeSupa}} />)
@@ -324,12 +390,23 @@ export default function Home() {
             <button onClick={() => thumbnailInputRef.current?.click()} className="bg-blue-500 text-white py-2 px-4 rounded">
               サムネイルを選択
             </button>
+            {
+              thumbnailsPreview.map((thumbnail, index) => (
+                <img
+                  key={index}
+                  src={thumbnail}
+                  alt={`Thumbnail Preview ${index}`}
+                  className="w-20 h-20 mr-2 mb-2"
+                />
+              ))
+            }
             <input
               type="text"
               placeholder="タグ (複数の場合はカンマ区切り)"
               onChange={(e: ChangeEvent<HTMLInputElement>) =>
                 setNewTags(e.target.value.split(',').map((tag) => tag.trim()))
               }
+              value={newTags.join(', ')}
               className="border border-gray-300 p-2 rounded"
             />
             <button onClick={addVideo} className="bg-green-500 text-white py-2 px-4 rounded">
