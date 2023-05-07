@@ -5,6 +5,8 @@ import ReactStars from 'react-rating-stars-component';
 import {Auth} from '@supabase/auth-ui-react'
 import {Session, Subscription} from '@supabase/supabase-js';
 import {ThemeSupa} from '@supabase/auth-ui-shared';
+import {uploadFileToS3} from "@/utils/awsClient";
+
 
 export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
@@ -144,8 +146,10 @@ export default function Home() {
           ))
         );
 
+        console.log("dfkjdwdj")
         // upload thumbnails
         const updatedThumbnailUrls = await uploadThumbnails(videoId);
+        console.log("dsfadfasdf")
 
         // サムネイルの関連を追加
         console.log("updatedThumbnailUrls", updatedThumbnailUrls)
@@ -243,7 +247,6 @@ export default function Home() {
       console.error("Failed to fetch thumbnails:", thumbnailsError);
       return;
     }
-    console.log("thumbnails:", thumbnails)
     for (const thumbnail of thumbnails) {
       const {error: deleteThumbnailError} = await supabase
         .storage
@@ -306,36 +309,25 @@ export default function Home() {
       }
 
       const files = Array.from(thumbnailInput.files);
+      const bucketName = process.env.NEXT_PUBLIC_AWS_S3_BUCKET_NAME || '';
 
-      for (const file of files) {
-        const filePath = `private/thumbnails/${videoId}/${file.name}`;
-
-        // Get the access token for the logged-in user
-        const {data: authSession} = await supabase.auth.getSession();
-        const accessToken = authSession?.session?.access_token;
-        if (!accessToken) {
-          console.error("User must be logged in to upload files.");
-          return;
-        }
-
+      // アップロードプロミスを作成
+      const uploadPromises = files.map(async (file) => {
+        const filePath = `thumbnails/${videoId}/${file.name}`;
         try {
-          // Upload the file
-          const {data, error: uploadError} = await supabase.storage.from("thumbnails").upload(filePath, file, {
-            cacheControl: "3600",
-            contentType: file.type,
-            upsert: false,
-          });
-          console.log("File uploaded:", data);
-          console.log("file path:", filePath);
-          setNewThumbnailUrls((prevUrls) => {
-            const updatedUrls = [...prevUrls, filePath];
-            resolve(updatedUrls); // Promiseを解決
-            return updatedUrls;
-          });
+          await uploadFileToS3(bucketName, filePath, file);
+          console.log("Upload succeeded for", filePath);
+          return filePath;
         } catch (error) {
           console.error("Failed to upload file:", error);
+          return null;
         }
-      }
+      });
+
+      // 全てのプロミスが解決されたら、成功したファイルパスだけを返す
+      const urls = await Promise.all(uploadPromises);
+      console.log("urls:", urls)
+      resolve(urls.filter((url) => url !== null) as string[]);
     });
   }
 
@@ -415,54 +407,74 @@ export default function Home() {
           </div>
         </div>
         <h1 className="text-4xl font-bold mb-4">動画一覧</h1>
-        <ul>
-          {videos.map((video) => (
-            <li key={video.id} className="mb-8">
-              <a
-                href={video.video_url}
-                className="text-2xl font-semibold text-blue-500 hover:text-blue-700"
-              >
-                {video.title}
-              </a>
-              <div className="flex items-center">
-                <ReactStars
-                  count={5}
-                  value={video.rating || 0}
-                  size={24}
-                  isHalf={true}
-                  edit={false}
-                  activeColor="#ffd700"
-                  className="mr-4"
-                />
-                {videoTags[video.id] &&
-                  videoTags[video.id].map((tag) => (
-                    <span
-                      key={tag.id}
-                      className="bg-gray-200 text-gray-700 rounded px-2 py-1 text-sm mr-2"
-                    >
-                      {tag.name}
-                    </span>
-                  ))}
-              </div>
-              <div className="flex space-x-2 mt-2">
-                {video.thumbnails.slice(0, 3).map((thumbnail, index) => (
-                  <img
-                    key={index}
-                    src={thumbnail.signed_url}
-                    alt={`サムネイル ${index + 1}`}
-                    className="w-20 h-20 object-cover rounded"
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">タイトル</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[150px]">評価</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">タグ</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">サムネイル</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {videos.map((video) => (
+              <tr key={video.id}>
+                <td className="px-6 py-4 whitespace-normal">
+                  <a
+                    href={video.video_url}
+                    className="text-l font-semibold text-blue-500 hover:text-blue-500"
+                  >
+                    {video.title}
+                  </a>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <ReactStars
+                    count={5}
+                    value={video.rating || 0}
+                    size={12}
+                    isHalf={true}
+                    edit={false}
+                    activeColor="#ffd700"
+                    className="mr-4"
                   />
-                ))}
-              </div>
-              <button
-                onClick={() => deleteVideo(video.id)}
-                className="text-white bg-red-500 px-4 py-2 rounded mt-2"
-              >
-                削除
-              </button>
-            </li>
-          ))}
-        </ul>
+                  <span className="text-sm text-gray-500">({video.rating?.toFixed(1) || 0})</span>
+                </td>
+                <td className="px-6 py-4 whitespace-normal">
+                  {videoTags[video.id] &&
+                    videoTags[video.id].map((tag) => (
+                      <span
+                        key={tag.id}
+                        className="bg-gray-200 text-gray-700 rounded px-2 py-1 text-sm mr-2"
+                      >
+                        {tag.name}
+                      </span>
+                    ))}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="flex space-x-2 mt-2">
+                    {video.thumbnails.map((thumbnail, index) => (
+                      <img
+                        key={index}
+                        src={thumbnail.signed_url}
+                        alt={`サムネイル ${index + 1}`}
+                        className="w-20 h-20 object-cover rounded"
+                      />
+                    ))}
+                  </div>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <button
+                    onClick={() => deleteVideo(video.id)}
+                    className="text-white bg-red-500 px-4 py-2 rounded"
+                  >
+                    削除
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div >
     );
   }

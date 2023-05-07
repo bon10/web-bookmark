@@ -9,6 +9,9 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.328.0",
+    "@aws-sdk/s3-request-presigner": "^3.328.0",
+    "@aws-sdk/types": "^3.310.0",
     "@supabase/auth-ui-react": "^0.3.5",
     "@supabase/supabase-js": "^2.21.0",
     "@types/node": "^18.16.3",
