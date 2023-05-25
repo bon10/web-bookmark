@@ -5,10 +5,14 @@ import ReactStars from 'react-rating-stars-component';
 import {Auth} from '@supabase/auth-ui-react'
 import {Session, Subscription} from '@supabase/supabase-js';
 import {ThemeSupa} from '@supabase/auth-ui-shared';
-import {uploadFileToS3} from "@/utils/awsClient";
+import {uploadFileToS3, s3GetSignedUrl, deleteFromS3, s3ListObjectsInDirectory} from "@/utils/awsClient";
+import Image from 'next/image'
+import ReactPaginate from 'react-paginate';
 
 
 export default function Home() {
+  const bucketName = process.env.NEXT_PUBLIC_AWS_S3_BUCKET_NAME || '';
+
   const [session, setSession] = useState<Session | null>(null);
   useEffect(() => {
     supabase.auth.getSession().then(({data: {session}}) => {
@@ -28,6 +32,25 @@ export default function Home() {
     fetchVideos();
   }, []);
 
+  // 動画情報一覧を取得
+  const [currentPage, setCurrentPage] = useState(0);
+  const videosPerPage = 30;
+  const pageCount = Math.ceil(videos.length / videosPerPage);
+  const currentVideos = videos.slice(currentPage * videosPerPage, (currentPage + 1) * videosPerPage);
+
+  function handlePageClick({selected: selectedPage}) {
+    setCurrentPage(selectedPage);
+  }
+
+  useEffect(() => {
+    // ページ遷移時にページトップにスクロールする
+    window.scrollTo(0, 0);
+  }, [currentPage]);
+
+  useEffect(() => {
+    setCurrentPage(0);  // データが変更されたら最初のページに戻す
+  }, [videos]);
+
   async function fetchVideos() {
     const {data: videosData, error: videosError} = await supabase
       .from('videos')
@@ -39,19 +62,10 @@ export default function Home() {
         videosData.map(async (video) => {
           const signedThumbnails = await Promise.all(
             video.thumbnails.map(async (thumbnail) => {
-              const {data: signedUrlData, error: signedUrlError} = await supabase.storage
-                .from('thumbnails')
-                .createSignedUrl(thumbnail.thumbnail_path, 600);
-
-              if (signedUrlError) {
-                console.error('Error creating signed URL:', signedUrlError.message);
-                return {...thumbnail, signed_url: ''};
-              }
-
-              return {...thumbnail, signed_url: signedUrlData.signedUrl};
+              const signedUrl = await s3GetSignedUrl(bucketName, thumbnail.thumbnail_path)
+              return {...thumbnail, signed_url: signedUrl};
             }),
           );
-
           return {...video, thumbnails: signedThumbnails};
         }),
       );
@@ -114,7 +128,6 @@ export default function Home() {
   const [newVideoUrl, setNewVideoUrl] = useState('');
   const [newVideoSortOrder, setNewVideoSortOrder] = useState<number | null>(null);
   const [newVideoRating, setNewVideoRating] = useState<number | null>(null);
-  const [newThumbnailUrls, setNewThumbnailUrls] = useState<string[]>([]);
   const [newTags, setNewTags] = useState<string[]>([]);
   const [thumbnailsPreview, setThumbnailsPreview] = useState<string[]>([]);
 
@@ -146,13 +159,10 @@ export default function Home() {
           ))
         );
 
-        console.log("dfkjdwdj")
         // upload thumbnails
         const updatedThumbnailUrls = await uploadThumbnails(videoId);
-        console.log("dsfadfasdf")
 
         // サムネイルの関連を追加
-        console.log("updatedThumbnailUrls", updatedThumbnailUrls)
         await supabase.from('thumbnails').insert(
           updatedThumbnailUrls.map((url) => ({
             video_id: videoId,
@@ -160,14 +170,15 @@ export default function Home() {
           }))
         );
 
+        console.log("Video added successfully!")
         setNewVideoTitle('');
         setNewVideoUrl('');
         setNewVideoSortOrder(null);
         setNewVideoRating(null);
         setNewTags([]);
         fetchVideos();
-        setNewThumbnailUrls([]);
         setThumbnailsPreview([]);
+        thumbnailInputRef.current!.value = ''; // 初期化
       }
     }
   };
@@ -238,34 +249,29 @@ export default function Home() {
     }
 
     // Delete related thumbnails Storage
+    const objectKeys = await s3ListObjectsInDirectory(bucketName, `thumbnails/${id}`);
+    for (const objectKey of objectKeys) {
+      await deleteFromS3(bucketName, objectKey);
+    }
     // フォルダーを直接消せないので中身のファイルを消すために一旦全ファイル名を取得してから消す
-    const {data: thumbnails, error: thumbnailsError} = await supabase
-      .storage
-      .from("thumbnails")
-      .list(`private/thumbnails/${id}`);
-    if (thumbnailsError) {
-      console.error("Failed to fetch thumbnails:", thumbnailsError);
-      return;
-    }
-    for (const thumbnail of thumbnails) {
-      const {error: deleteThumbnailError} = await supabase
-        .storage
-        .from("thumbnails")
-        .remove([`private/thumbnails/${id}/${thumbnail.name}`]);
-      if (deleteThumbnailError) {
-        console.error("Failed to delete thumbnail:", deleteThumbnailError);
-        return;
-      }
-    }
-    const {data: deletedThumbnails, error: deleteThumbnailsError} = await supabase
-      .storage
-      .from("thumbnails")
-      .remove([`private/thumbnails/${id}/*`]);
-
-    if (deleteThumbnailsError) {
-      console.error("Failed to delete thumbnails:", deleteThumbnailsError);
-      return;
-    }
+    // const {data: thumbnails, error: thumbnailsError} = await supabase
+    //   .storage
+    //   .from("thumbnails")
+    //   .list(`private/thumbnails/${id}`);
+    // if (thumbnailsError) {
+    //   console.error("Failed to fetch thumbnails:", thumbnailsError);
+    //   return;
+    // }
+    // for (const thumbnail of thumbnails) {
+    //   const {error: deleteThumbnailError} = await supabase
+    //     .storage
+    //     .from("thumbnails")
+    //     .remove([`private/thumbnails/${id}/${thumbnail.name}`]);
+    //   if (deleteThumbnailError) {
+    //     console.error("Failed to delete thumbnail:", deleteThumbnailError);
+    //     return;
+    //   }
+    // }
 
     // Delete related thumbnails records
     const {error: deleteThumbnailsRecordError} = await supabase
@@ -309,7 +315,6 @@ export default function Home() {
       }
 
       const files = Array.from(thumbnailInput.files);
-      const bucketName = process.env.NEXT_PUBLIC_AWS_S3_BUCKET_NAME || '';
 
       // アップロードプロミスを作成
       const uploadPromises = files.map(async (file) => {
@@ -326,7 +331,6 @@ export default function Home() {
 
       // 全てのプロミスが解決されたら、成功したファイルパスだけを返す
       const urls = await Promise.all(uploadPromises);
-      console.log("urls:", urls)
       resolve(urls.filter((url) => url !== null) as string[]);
     });
   }
@@ -410,16 +414,20 @@ export default function Home() {
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">タイトル</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[150px]">評価</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">タグ</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">サムネイル</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[300px]">サムネイル</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {videos.map((video) => (
+            {currentVideos.map((video) => (
               <tr key={video.id}>
+                <td className="px-6 py-4 whitespace-normal">
+                  <span className="text-sm text-gray-500">{video.id}</span>
+                </td>
                 <td className="px-6 py-4 whitespace-normal">
                   <a
                     href={video.video_url}
@@ -443,22 +451,24 @@ export default function Home() {
                 <td className="px-6 py-4 whitespace-normal">
                   {videoTags[video.id] &&
                     videoTags[video.id].map((tag) => (
-                      <span
+                      <div
                         key={tag.id}
-                        className="bg-gray-200 text-gray-700 rounded px-2 py-1 text-sm mr-2"
+                        className="bg-gray-200 text-gray-700 rounded px-2 py-1 text-sm mr-2 whitespace-nowrap mb-1 inline-block"
                       >
                         {tag.name}
-                      </span>
+                      </div>
                     ))}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   <div className="flex space-x-2 mt-2">
                     {video.thumbnails.map((thumbnail, index) => (
-                      <img
+                      <Image
                         key={index}
                         src={thumbnail.signed_url}
                         alt={`サムネイル ${index + 1}`}
                         className="w-20 h-20 object-cover rounded"
+                        width={80}
+                        height={80}
                       />
                     ))}
                   </div>
@@ -475,6 +485,27 @@ export default function Home() {
             ))}
           </tbody>
         </table>
+        <ReactPaginate
+          previousLabel={"← 前"}
+          nextLabel={"次 →"}
+          breakLabel={"..."}
+          breakClassName={"break-me"}
+          pageCount={pageCount}
+          marginPagesDisplayed={2}
+          pageRangeDisplayed={5}
+          onPageChange={handlePageClick}
+          containerClassName={"pagination"}
+          activeClassName={"active"}
+          pageClassName={"page"}
+          previousClassName={"previous"}
+          nextClassName={"next"}
+          pageLinkClassName={"page-link"}
+          previousLinkClassName={"previous-link"}
+          nextLinkClassName={"next-link"}
+          disabledClassName={"disabled"}
+          activeLinkClassName={"active-link"}
+          forcePage={currentPage}
+        />
       </div >
     );
   }

@@ -1,3 +1,41 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+.pagination {
+  display: flex;
+  justify-content: center;
+  padding: 2rem;
+  list-style: none;
+}
+
+.page {
+  margin: 0 1rem;
+}
+
+.page-link {
+  @apply text-blue-500;
+  @apply cursor-pointer;
+}
+
+.active .page-link {
+  @apply text-white;
+  @apply bg-blue-500;
+  @apply rounded-full;
+  @apply px-3;
+}
+
+.previous-link,
+.next-link {
+  @apply text-white;
+  @apply bg-blue-500;
+  @apply rounded-full;
+  @apply px-3;
+  @apply cursor-pointer;
+}
+
+.disabled .previous-link,
+.disabled .next-link {
+  @apply bg-gray-500;
+  @apply cursor-not-allowed;
+}
