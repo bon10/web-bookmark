@@ -6,9 +6,9 @@
 
 ## 構成
 
-DB: Supabase database
-Authentication: Supabase Authentication
-Storage: AWS S3
+DB: Supabase database  
+Authentication: Supabase Authentication  
+Storage: AWS S3  
 
 ## 注意事項
 
