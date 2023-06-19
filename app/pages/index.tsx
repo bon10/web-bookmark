@@ -32,7 +32,7 @@ export default function Home() {
     fetchVideos();
   }, []);
 
-  // 動画情報一覧を取得
+  //情報一覧を取得
   const [currentPage, setCurrentPage] = useState(0);
   const videosPerPage = 30;
   const pageCount = Math.ceil(videos.length / videosPerPage);
@@ -233,7 +233,7 @@ export default function Home() {
 
   async function deleteVideo(id: number) {
     // Confirm the deletion with the user
-    if (!window.confirm('本当にこの動画を削除してもよろしいですか？')) {
+    if (!window.confirm('本当にこのブックマークを削除してもよろしいですか？')) {
       return;
     }
 
@@ -342,18 +342,18 @@ export default function Home() {
     return (
       <div className="container mx-auto px-4">
         <div className="bg-gray-100 p-8">
-          <h2 className="text-2xl font-semibold mb-4">動画を追加</h2>
+          <h2 className="text-2xl font-semibold mb-4">Webサイトを追加</h2>
           <div className="flex flex-col space-y-4">
             <input
               type="text"
-              placeholder="動画タイトル"
+              placeholder="Webサイトタイトル"
               value={newVideoTitle}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setNewVideoTitle(e.target.value)}
               className="border border-gray-300 p-2 rounded"
             />
             <input
               type="text"
-              placeholder="動画URL"
+              placeholder="WebサイトURL"
               value={newVideoUrl}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setNewVideoUrl(e.target.value)}
               className="border border-gray-300 p-2 rounded"
@@ -410,7 +410,7 @@ export default function Home() {
             </button>
           </div>
         </div>
-        <h1 className="text-4xl font-bold mb-4">動画一覧</h1>
+        <h1 className="text-4xl font-bold mb-4">Webサイト一覧</h1>
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
