@@ -2,8 +2,9 @@
 const nextConfig = {
   reactStrictMode: true,
   images: {
-    domains: [process.env.AWS_BUCKET_DOMAIN],
-    //domains: ['production-tube-bookmark-bucket.s3.ap-northeast-1.amazonaws.com'],
+    remotePatterns: process.env.AWS_BUCKET_DOMAIN
+      ? [{protocol: 'https', hostname: process.env.AWS_BUCKET_DOMAIN}]
+      : [],
   },
   async headers () {
     return [

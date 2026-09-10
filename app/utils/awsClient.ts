@@ -1,134 +1,73 @@
-// awsClient.ts
-import {S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command} from "@aws-sdk/client-s3";
-import {getSignedUrl} from "@aws-sdk/s3-request-presigner";
-import tk from "timekeeper";
+import 'server-only';
 
-// 署名付きURLのキャッシュを有効化するための時間の設定
-// round the time to the last 10-minute mark
-// const getTruncatedTime = (): Date => {
-//   const currentTime = new Date();
-//   const d = new Date(currentTime);
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+  ListObjectsV2Command,
+} from '@aws-sdk/client-s3';
+import {getSignedUrl} from '@aws-sdk/s3-request-presigner';
 
-//   d.setMinutes(Math.floor(d.getMinutes() / 10) * 10);
-//   d.setSeconds(0);
-//   d.setMilliseconds(0);
+export const bucketName = process.env.AWS_S3_BUCKET_NAME ?? '';
 
-//   return d;
-// };
-// 24時間で切り捨てる。24時間変わるタイミングでキャッシュが切れるので、タイミングによってはエラーになるかもしれない
-const getTruncatedTime = (): Date => {
-  const currentTime = new Date();
-  const d = new Date(currentTime);
+const SIGNED_URL_TTL_SECONDS = 86400;
 
-  d.setHours(0);
-  d.setMinutes(0);
-  d.setSeconds(0);
-  d.setMilliseconds(0);
+/**
+ * 署名日時を当日0時に切り捨てる。
+ *
+ * 署名付きURLは署名日時が変わるたびに別のURLになるため、リクエストごとに署名すると
+ * ブラウザキャッシュが毎回外れる。1日1回だけURLが変わるようにして、キャッシュを効かせる。
+ * 切り捨てた分だけ有効期限も前倒しになるので、0時をまたぐ直前に発行したURLは寿命が短い。
+ */
+function getTruncatedSigningDate(): Date {
+  const signingDate = new Date();
+  signingDate.setHours(0, 0, 0, 0);
+  return signingDate;
+}
 
-  return d;
-};
-
-
-// S3クライアントの初期化
 const s3Client = new S3Client({
-  region: process.env.NEXT_PUBLIC_AWS_REGION || "your-region",
+  region: process.env.AWS_REGION,
   credentials: {
-    accessKeyId: process.env.NEXT_PUBLIC_AWS_ACCESS_KEY_ID || "your-access-key-id",
-    secretAccessKey: process.env.NEXT_PUBLIC_AWS_SECRET_ACCESS_KEY || "your-secret-access-key",
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
   },
 });
 
-// ファイルをアップロードする関数
-async function uploadFileToS3(bucketName, filePath, file) {
-  const putObjectParams = {
-    Bucket: bucketName,
-    Key: filePath, // バケット内のファイルパス
-    Body: file, // アップロードするファイル
-    ContentType: file.type, // Content-Typeを設定
-    ACL: "private" // アクセス権限を指定（オプション）
-  };
-
-  const putObjectCommand = new PutObjectCommand(putObjectParams);
-
-  try {
-    const uploadResult = await s3Client.send(putObjectCommand);
-    console.log("ファイルのアップロードに成功しました:", uploadResult);
-  } catch (error) {
-    console.error("ファイルのアップロードに失敗しました:", error);
-    throw error;
-  }
+export async function uploadFileToS3(objectKey: string, file: File): Promise<void> {
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: bucketName,
+      Key: objectKey,
+      Body: Buffer.from(await file.arrayBuffer()),
+      ContentType: file.type,
+      ACL: 'private',
+    }),
+  );
 }
 
-
-// 署名付きURLを取得する関数
-// 24時間キャッシュする
-async function s3GetSignedUrl(bucketName, filePath, expiresIn = 86400) {
-  const getObjectParams = {
-    Bucket: bucketName,
-    Key: filePath,
-  };
-
-  const getObjectCommand = new GetObjectCommand(getObjectParams);
-
-  try {
-    //const signedUrl = await getSignedUrl(s3Client, getObjectCommand, {expiresIn: expiresIn});
-    //console.log("署名付きURLの取得に成功しました:", signedUrl)
-
-    const signedUrl = tk.withFreeze(getTruncatedTime(), async () => {
-      const presignedUrl = await getSignedUrl(s3Client, getObjectCommand, {expiresIn: expiresIn});
-      console.log("署名付きURLの取得に成功しました:", presignedUrl)
-      return presignedUrl;
-    });
-    // const tk = require("timekeeper");
-    // const signedUrl = await tk.withFreeze(getTruncatedTime(), () => {
-    //   getSignedUrl(s3Client, getObjectCommand, {expiresIn: expiresIn});
-    //   console.log("署名付きURLの取得に成功しました:", signedUrl)
-    // });
-
-    return signedUrl;
-  } catch (error) {
-    console.error("署名付きURLの取得に失敗しました:", error);
-    return null;
-  }
+export async function s3GetSignedUrl(objectKey: string): Promise<string> {
+  return getSignedUrl(s3Client, new GetObjectCommand({Bucket: bucketName, Key: objectKey}), {
+    expiresIn: SIGNED_URL_TTL_SECONDS,
+    signingDate: getTruncatedSigningDate(),
+  });
 }
 
 /**
- * Lists all objects in the specified directory in S3.
- * @param bucketName The name of the S3 bucket.
- * @param directoryPath The path of the directory in the S3 bucket.
- * @returns An array of object keys for the objects in the specified directory.
+ * 指定ディレクトリ配下のオブジェクトキーを列挙する。
+ * S3 にはディレクトリの概念が無く一括削除もできないため、削除前の列挙に使う。
  */
-export async function s3ListObjectsInDirectory(bucketName: string, directoryPath: string): Promise<string[]> {
-  const listObjectsParams = {
-    Bucket: bucketName,
-    Prefix: directoryPath.endsWith("/") ? directoryPath : `${directoryPath}/`,
-  };
+export async function s3ListObjectsInDirectory(directoryPath: string): Promise<string[]> {
+  const prefix = directoryPath.endsWith('/') ? directoryPath : `${directoryPath}/`;
+  const {Contents} = await s3Client.send(
+    new ListObjectsV2Command({Bucket: bucketName, Prefix: prefix}),
+  );
 
-  const listObjectsCommand = new ListObjectsV2Command(listObjectsParams);
-  const {Contents: objects} = await s3Client.send(listObjectsCommand);
-  const objectKeys = objects
-    ? objects
-      .map((object) => object.Key)
-      .filter((key): key is string => key !== undefined)
-    : [];
-  return objectKeys;
+  return (Contents ?? [])
+    .map((object) => object.Key)
+    .filter((key): key is string => key !== undefined);
 }
 
-/**
- * Deletes the specified object from S3.
- * @param bucketName The name of the S3 bucket.
- * @param objectKey The object key of the object to delete.
- * @returns A promise that resolves when the object is deleted.
- */
-export async function deleteFromS3(bucketName: string, objectKey: string): Promise<void> {
-  const deleteObjectParams = {
-    Bucket: bucketName,
-    Key: objectKey,
-  };
-
-  const deleteObjectCommand = new DeleteObjectCommand(deleteObjectParams);
-  await s3Client.send(deleteObjectCommand);
-  console.log(`Deleted object ${objectKey} from bucket ${bucketName}`);
+export async function deleteFromS3(objectKey: string): Promise<void> {
+  await s3Client.send(new DeleteObjectCommand({Bucket: bucketName, Key: objectKey}));
 }
-
-export {s3Client, uploadFileToS3, s3GetSignedUrl};

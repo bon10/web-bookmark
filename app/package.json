@@ -6,32 +6,28 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint ."
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.328.0",
-    "@aws-sdk/s3-request-presigner": "^3.328.0",
-    "@aws-sdk/types": "^3.310.0",
-    "@supabase/auth-ui-react": "^0.3.5",
-    "@supabase/supabase-js": "^2.21.0",
-    "@types/node": "^18.16.3",
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "18.2.1",
-    "@types/react-paginate": "^7.1.1",
-    "eslint": "8.39.0",
-    "eslint-config-next": "13.3.1",
-    "next": "13.3.1",
-    "react": "18.2.0",
-    "react-dom": "18.2.0",
-    "react-paginate": "^8.2.0",
-    "react-rating-stars-component": "^2.2.0",
-    "timekeeper": "^2.2.0",
-    "typescript": "^5.0.4"
+    "@aws-sdk/client-s3": "3.1129.0",
+    "@aws-sdk/s3-request-presigner": "3.1129.0",
+    "@supabase/ssr": "0.12.7",
+    "@supabase/supabase-js": "2.116.0",
+    "next": "16.3.4",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-paginate": "8.3.0",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
-    "@types/react-star-rating-component": "^1.4.1",
-    "autoprefixer": "^10.4.14",
-    "postcss": "^8.4.23",
-    "tailwindcss": "^3.3.2"
+    "@types/node": "22.20.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "autoprefixer": "10.5.5",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.4",
+    "postcss": "8.5.28",
+    "tailwindcss": "3.4.19",
+    "typescript": "5.9.3"
   }
 }
