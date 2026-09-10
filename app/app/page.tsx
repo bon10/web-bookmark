@@ -1,11 +1,10 @@
 import {createClient} from '@/utils/supabase/server';
-import {s3GetSignedUrl} from '@/utils/awsClient';
+import {thumbnailUrl} from '@/utils/thumbnailUrl';
 import LoginForm from '@/components/LoginForm';
 import AddVideoForm from '@/components/AddVideoForm';
 import VideoTable, {type VideoListItem} from '@/components/VideoTable';
 
-// 署名付きURLは当日0時基準で発行され、閲覧者ごとのセッションにも依存するため、
-// ビルド時に固定せずリクエストごとに描画する。
+// 一覧の内容はログイン中のセッションに依存するため、ビルド時に固定せずリクエストごとに描画する。
 export const dynamic = 'force-dynamic';
 
 export default async function Home() {
@@ -32,21 +31,18 @@ export default async function Home() {
     );
   }
 
-  const videos: VideoListItem[] = await Promise.all(
-    (data ?? []).map(async (video) => ({
-      id: video.id,
-      title: video.title,
-      videoUrl: video.video_url,
-      rating: video.rating,
-      tags: video.video_tags.flatMap((videoTag) => (videoTag.tags ? [videoTag.tags] : [])),
-      thumbnails: await Promise.all(
-        video.thumbnails.map(async (thumbnail) => ({
-          id: thumbnail.id,
-          signedUrl: await s3GetSignedUrl(thumbnail.thumbnail_path),
-        })),
-      ),
+  // R2 は公開URLで直接配信するため、署名の発行が不要になり同期処理で済む。
+  const videos: VideoListItem[] = (data ?? []).map((video) => ({
+    id: video.id,
+    title: video.title,
+    videoUrl: video.video_url,
+    rating: video.rating,
+    tags: video.video_tags.flatMap((videoTag) => (videoTag.tags ? [videoTag.tags] : [])),
+    thumbnails: video.thumbnails.map((thumbnail) => ({
+      id: thumbnail.id,
+      url: thumbnailUrl(thumbnail.thumbnail_path),
     })),
-  );
+  }));
 
   return (
     <main className="container mx-auto px-4">

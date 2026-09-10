@@ -2,7 +2,7 @@
 
 import {revalidatePath} from 'next/cache';
 import {createClient} from '@/utils/supabase/server';
-import {deleteFromS3, s3ListObjectsInDirectory, uploadFileToS3} from '@/utils/awsClient';
+import {deleteThumbnail, listThumbnailKeys, uploadThumbnail} from '@/utils/r2Client';
 
 export type ActionResult = {error: string} | {error: null};
 
@@ -104,17 +104,15 @@ export async function addVideo(_prevState: ActionResult, formData: FormData): Pr
   }
 
   const thumbnails = formData.getAll('thumbnails').filter((entry): entry is File => entry instanceof File && entry.size > 0);
-  const uploadedPaths: string[] = [];
+  const uploadedKeys: string[] = [];
   for (const thumbnail of thumbnails) {
-    const objectKey = `thumbnails/${video.id}/${thumbnail.name}`;
-    await uploadFileToS3(objectKey, thumbnail);
-    uploadedPaths.push(objectKey);
+    uploadedKeys.push(await uploadThumbnail(video.id, thumbnail));
   }
 
-  if (uploadedPaths.length > 0) {
+  if (uploadedKeys.length > 0) {
     await supabase
       .from('thumbnails')
-      .insert(uploadedPaths.map((thumbnailPath) => ({video_id: video.id, thumbnail_path: thumbnailPath})));
+      .insert(uploadedKeys.map((thumbnailPath) => ({video_id: video.id, thumbnail_path: thumbnailPath})));
   }
 
   revalidatePath('/');
@@ -132,10 +130,10 @@ export async function deleteVideo(videoId: number): Promise<ActionResult> {
     return {error: `タグの関連削除に失敗しました: ${videoTagsError.message}`};
   }
 
-  // S3 はディレクトリ単位で消せないので、配下のオブジェクトを列挙して1件ずつ削除する。
-  const objectKeys = await s3ListObjectsInDirectory(`thumbnails/${videoId}`);
+  // R2 はディレクトリ単位で消せないので、配下のオブジェクトを列挙して1件ずつ削除する。
+  const objectKeys = await listThumbnailKeys(videoId);
   for (const objectKey of objectKeys) {
-    await deleteFromS3(objectKey);
+    await deleteThumbnail(objectKey);
   }
 
   const {error: thumbnailsError} = await supabase

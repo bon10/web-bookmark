@@ -1,24 +1,13 @@
 /** @type {import('next').NextConfig} */
+
+// サムネイルの配信元。next/image はここに列挙したホストからしか画像を取得しない。
+const r2PublicUrl = process.env.NEXT_PUBLIC_R2_PUBLIC_URL
+const r2Hostname = r2PublicUrl ? new URL(r2PublicUrl).hostname : undefined
+
 const nextConfig = {
   reactStrictMode: true,
   images: {
-    remotePatterns: process.env.AWS_BUCKET_DOMAIN
-      ? [{protocol: 'https', hostname: process.env.AWS_BUCKET_DOMAIN}]
-      : [],
-  },
-  async headers () {
-    return [
-      {
-       source: '/(.*).(jpg|png)',
-       headers: [
-         {
-           key: 'Cache-Control',
-           value:
-             'public, max-age=300, s-maxage=300', // 5 minutes
-         },
-       ],
-      }
-    ]
+    remotePatterns: r2Hostname ? [{protocol: 'https', hostname: r2Hostname}] : [],
   },
 }
 

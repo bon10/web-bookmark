@@ -12,7 +12,7 @@ export type VideoListItem = {
   videoUrl: string;
   rating: number | null;
   tags: {id: number; name: string}[];
-  thumbnails: {id: number; signedUrl: string}[];
+  thumbnails: {id: number; url: string}[];
 };
 
 const VIDEOS_PER_PAGE = 30;
@@ -91,7 +91,7 @@ export default function VideoTable({videos}: {videos: VideoListItem[]}) {
                   {video.thumbnails.map((thumbnail, index) => (
                     <Image
                       key={thumbnail.id}
-                      src={thumbnail.signedUrl}
+                      src={thumbnail.url}
                       alt={`サムネイル ${index + 1}`}
                       className="h-20 w-20 rounded object-cover"
                       width={80}
