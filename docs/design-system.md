@@ -1,0 +1,109 @@
+# デザイン方針
+
+画面の意匠に関する決定を一箇所に定める。新しい画面・部品を足すときはこの方針に従い、外れる必要が出たらまずここを直す。
+
+用語は [ユビキタス言語](ubiquitous-language.md) に従う。
+
+---
+
+## 意匠の芯
+
+**「栞 — 書架」**。個人の蔵書を収めた書庫という見立て。
+
+1. **朱を一点だけ効かせる。** 地は無彩色に寄せ、朱（`--shu`）は「いま効いているもの」だけに使う。フォーカス中の入力欄、選択中のタグ、実行ボタン、エラー。**朱が2つ以上同時に主張する画面は作らない。**
+2. **罫線で組む。** 面を塗り分けるより、1px の罫で領域を仕切る。角丸はほぼ落とす（既定 2px）。書類・カードの佇まいにする。
+3. **和文と欧文で役割を分ける。** 見出しは明朝、本文は角ゴ、数字とラテンの極小ラベルは等幅。この3層の対比が意匠の核。
+4. **サムネイルが主役。** ブックマークは画像で思い出すものなので、カードは画像を最大面積で見せる。
+
+---
+
+## 色トークン
+
+実体は `app/styles/globals.css` の `:root`。Tailwind からは `rgb(var(--x) / <alpha-value>)` 経由で `bg-ink` `text-dim` のように参照する。**コンポーネントに生の hex を書かない。**
+
+| トークン | 役割 | 淡（light） | 濃（dark） |
+| --- | --- | --- | --- |
+| `--ink` | ページの地 | `247 245 239`（生成り） | `11 12 14`（墨） |
+| `--panel` | カード・パネルの面 | `255 254 250` | `17 19 23` |
+| `--raise` | 入力欄など一段沈む面 | `240 237 229` | `23 26 31` |
+| `--line` | 罫線 | `214 208 196` | `38 42 49` |
+| `--line-soft` | 地の方眼罫 | `228 223 212` | `27 30 35` |
+| `--text` | 本文 | `26 24 22` | `236 233 227` |
+| `--dim` | 副次テキスト | `92 87 80` | `154 160 168` |
+| `--faint` | 極小ラベル・補助 | `120 113 104` | `104 110 118` |
+| `--shu` | 朱（アクセント） | `199 48 29` | `228 70 46` |
+| `--shu-lit` | 朱の強調・ホバー先 | `160 33 18`（暗く） | `255 122 94`（明るく） |
+| `--gold` | 星・完了通知 | `168 118 16` | `231 179 74` |
+
+`--shu-lit` は「地から離れる方向」に振る。**淡では暗く、濃では明るくなる**ので、`hover:text-shu-lit` の見え方が両テーマで逆向きにならない。
+
+地の演出の強さもトークン化してテーマごとに持つ：`--glow-shu` `--glow-gold`（朱と金の放射光）、`--grid-alpha`（方眼罫）、`--grain-opacity`（フィルムグレイン）、`--seal-glow`（朱印のにじみ）。
+
+---
+
+## テーマ切り替え
+
+3状態：`system`（OS 設定に従う）/ `light` / `dark`。実際に `<html data-theme>` に載るのは `light` か `dark` のどちらかで、`system` は `matchMedia` で解決してから載せる。
+
+**仕組み**
+
+1. `app/utils/theme.ts` の `THEME_BOOTSTRAP_SCRIPT` を `layout.tsx` の `<head>` に**同期スクリプト**として差し込む。React のハイドレーションより前に `data-theme` を確定させ、初回表示のちらつきを防ぐ
+2. `<html>` には `suppressHydrationWarning` を付ける（サーバー出力に `data-theme` は無いため）
+3. `ThemeToggle` は `useSyncExternalStore` で `localStorage` と OS 設定を購読する。スナップショットは `"選択値 実効値"` の文字列で、**実効値を含めるのは選択値が `system` のまま OS 側だけ変わった場合も検知するため**
+4. 選択値は `localStorage['tube-bookmark:theme']`。`system` のときはキー自体を消す
+
+**注意：濃のパレットは `globals.css` に2箇所ある。** `:root[data-theme='dark']` と、JS 無効時のフォールバックである `@media (prefers-color-scheme: dark) { :root:not([data-theme]) }`。**片方だけ直すとテーマがずれる。**
+
+---
+
+## 書体
+
+Web フォントは配信しない。各 OS に載っている書体で3層の対比を作る（`tailwind.config.js` の `fontFamily`）。
+
+| 用途 | Tailwind | 中身 |
+| --- | --- | --- |
+| 見出し | `font-display` | Hiragino Mincho ProN → Yu Mincho → serif |
+| 本文・UI | `font-sans` | Hiragino Kaku Gothic ProN → Yu Gothic → sans-serif |
+| 数字・欧文小ラベル | `font-mono` | ui-monospace → SF Mono → Menlo |
+
+**明朝の見出しは `font-semibold`（600）まで。** `font-bold`（700）にすると Hiragino Mincho ProN は W6 を超えて合成太字になり、輪郭が濁る。
+
+**`.kicker`（欧文の極小ラベル）に和文を入れない。** `uppercase` と `tracking-[0.22em]` がかかっており、和文だと字間が崩れる。和文のラベルが要るときは `font-sans` の通常サイズで書く。
+
+数字を並べるところには `.tnum`（`font-variant-numeric: tabular-nums`）を付け、桁を揃える。
+
+---
+
+## 共通クラス
+
+`globals.css` の `@layer components` に置く。**同じ見た目を2箇所以上で書きそうになったらここに足す。**
+
+| クラス | 用途 |
+| --- | --- |
+| `.field` / `.field-error` | 入力欄。フォーカスで朱が灯る |
+| `.kicker` | 欧文の極小ラベル |
+| `.btn` ＋ `.btn-shu` / `.btn-ghost` | ボタン。`.btn-shu` が主操作、1画面に1つ |
+| `.chip` / `.chip-on` | タグ片。`-on` が選択中 |
+| `.notice` ＋ `.notice-error` / `.notice-done` | 一行通知。朱＝失敗、金＝成功 |
+| `.seal` | 朱印 |
+| `.rule-shu` | 見出し下に引く朱の短い罫 |
+| `.pagination` | react-paginate が吐くマークアップ用 |
+
+---
+
+## モーション
+
+高揚は**読み込み時の一度**に集める。細かいマイクロインタラクションを散らさない。
+
+- `animate-rise` / `animate-seal` / `animate-draw` を `[animation-delay:*]` でずらし、ログイン画面の初回描画を段差で見せる
+- 一覧側は**ホバーの応答のみ**。カード下端の朱の罫（`scale-x`）とサムネイルのわずかな拡大
+- `prefers-reduced-motion: reduce` で全アニメーションと transition を停止する（`globals.css` 末尾）
+
+---
+
+## やらないこと
+
+- **UI ライブラリを足さない。** 既定の見た目に引っ張られて上記の意匠が崩れる。部品は Tailwind と `@layer components` で組む
+- **生の hex をコンポーネントに書かない。** 必ずトークン経由
+- **朱を装飾に使わない。** 状態を示すときだけ
+- **和文 Web フォントを足さない。** 配信量に見合わないと判断済み
