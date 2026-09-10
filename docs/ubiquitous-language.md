@@ -48,9 +48,11 @@
 
 一覧の並び順を決める整数。マスタ（`videos.sort_order`）。未指定は 0。
 
-### ホスト名（Host）
+### URL の表示
 
-ブックマークの URL から算出する表示専用の**派生値**。`www.` を落として表示する（`hostOf`）。DB には持たない。
+一覧では **URL を省略せず全文で出す**。ブックマークを開くためではなく、**URL 自体を貼り付けたい場面が多い**ため。
+
+以前はホスト名だけを表示していたが（`hostOf`）、貼り付け用途を満たせないので廃止した。現在は全文表示に `user-select: all` を当て、あわせてコピーボタンを置いている（`BookmarkUrl`）。
 
 ---
 
@@ -83,13 +85,12 @@
 | 概念 | UI ラベル | コード上の識別子 | データソース |
 | --- | --- | --- | --- |
 | ブックマーク | ブックマーク / 書架（一覧） | `Bookmark`, `bookmarks`, `addBookmark`, `deleteBookmark` | `videos` |
-| ブックマークのURL | URL | `Bookmark.url` | `videos.video_url` |
+| ブックマークのURL | URL（**全文表示・省略しない**） | `Bookmark.url`, `BookmarkUrl` | `videos.video_url` |
 | タイトル | タイトル | `Bookmark.title` | `videos.title` |
 | 評価 | Rating（欧文小ラベル） | `Bookmark.rating` | `videos.rating` |
 | タグ | Tags（欧文小ラベル） | `Bookmark.tags` | `tags` × `video_tags` |
-| サムネイル | Thumbnails（欧文小ラベル） | `Bookmark.thumbnails` | `thumbnails` ＋ R2 |
+| サムネイル | Thumbnails（欧文小ラベル） | `Bookmark.thumbnails`, `ThumbnailCarousel` | `thumbnails` ＋ R2 |
 | 表示順 | Sort order（欧文小ラベル） | `sort_order`（フォーム項目名） | `videos.sort_order` |
-| ホスト名 | （ラベルなし・カード内に表示） | `hostOf()` | 派生値 |
 | 表示テーマ | auto / light / dark | `ThemeMode`, `ResolvedTheme` | `localStorage` ＋ OS 設定 |
 
 ---

@@ -3,10 +3,11 @@
 // ユビキタス言語: docs/ubiquitous-language.md
 // 「ブックマーク（Bookmark）」の一覧・絞り込み・削除を受け持つ。
 
-import {useEffect, useMemo, useState, useTransition} from 'react';
+import {useEffect, useMemo, useRef, useState, useTransition} from 'react';
 import Image from 'next/image';
 import ReactPaginate from 'react-paginate';
 import StarRating from '@/components/StarRating';
+import ThumbnailCarousel from '@/components/ThumbnailCarousel';
 import {deleteBookmark} from '@/app/actions';
 
 export type Bookmark = {
@@ -22,18 +23,13 @@ type ViewMode = 'grid' | 'list';
 
 const BOOKMARKS_PER_PAGE = 30;
 
-/** URL のホスト名だけを取り出す。不正な URL でも一覧を壊さないよう、失敗時は元の文字列を返す。 */
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return url;
-  }
-}
+// タグが増えると絞り込み欄だけで画面が埋まるため、既定ではこの件数までしか出さない。
+const TAG_COLLAPSED_COUNT = 12;
 
 export default function BookmarkArchive({bookmarks}: {bookmarks: Bookmark[]}) {
   const [query, setQuery] = useState('');
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
+  const [showAllTags, setShowAllTags] = useState(false);
   const [view, setView] = useState<ViewMode>('grid');
   const [currentPage, setCurrentPage] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -55,7 +51,19 @@ export default function BookmarkArchive({bookmarks}: {bookmarks: Bookmark[]}) {
     return [...counts.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'ja'));
   }, [bookmarks]);
 
-  // 選んだタグは AND で絞り込む（複数選択は「両方を持つもの」の意味にする）。
+  // 折りたたみ中でも、選択済みのタグは必ず見せる（外せなくなるのを防ぐ）。
+  const listedTags = useMemo(() => {
+    if (showAllTags || tagIndex.length <= TAG_COLLAPSED_COUNT) {
+      return tagIndex;
+    }
+    const head = tagIndex.slice(0, TAG_COLLAPSED_COUNT);
+    const selectedBeyondHead = tagIndex
+      .slice(TAG_COLLAPSED_COUNT)
+      .filter((tag) => selectedTagIds.includes(tag.id));
+    return [...head, ...selectedBeyondHead];
+  }, [tagIndex, showAllTags, selectedTagIds]);
+
+  // 選んだタグは AND で絞り込む（複数選択は「すべて持つもの」の意味にする）。
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return bookmarks.filter((bookmark) => {
@@ -115,6 +123,7 @@ export default function BookmarkArchive({bookmarks}: {bookmarks: Bookmark[]}) {
   }
 
   const isFiltered = query.trim() !== '' || selectedTagIds.length > 0;
+  const hiddenTagCount = tagIndex.length - listedTags.length;
 
   return (
     <div>
@@ -160,19 +169,32 @@ export default function BookmarkArchive({bookmarks}: {bookmarks: Bookmark[]}) {
         </div>
 
         {tagIndex.length > 0 && (
-          <div className="mt-3 flex flex-wrap items-center gap-1.5">
-            {tagIndex.map((tag) => (
-              <button
+          <div
+            className={`mt-3 flex flex-wrap items-center gap-1.5 ${
+              showAllTags ? 'max-h-[28vh] overflow-y-auto pr-1' : ''
+            }`}
+          >
+            {listedTags.map((tag) => (
+              <TagChip
                 key={tag.id}
-                type="button"
-                onClick={() => toggleTag(tag.id)}
-                aria-pressed={selectedTagIds.includes(tag.id)}
-                className={`chip ${selectedTagIds.includes(tag.id) ? 'chip-on' : 'hover:border-dim hover:text-text'}`}
-              >
-                {tag.name}
-                <span className="tnum font-mono text-[10px] opacity-50">{tag.count}</span>
-              </button>
+                name={tag.name}
+                count={tag.count}
+                isSelected={selectedTagIds.includes(tag.id)}
+                onToggle={() => toggleTag(tag.id)}
+              />
             ))}
+
+            {tagIndex.length > TAG_COLLAPSED_COUNT && (
+              <button
+                type="button"
+                onClick={() => setShowAllTags((current) => !current)}
+                aria-expanded={showAllTags}
+                className="ml-1 font-mono text-[10px] uppercase tracking-[0.16em] text-faint transition-colors hover:text-text"
+              >
+                {showAllTags ? '折りたたむ' : `+${hiddenTagCount} 件`}
+              </button>
+            )}
+
             {isFiltered && (
               <button
                 type="button"
@@ -205,8 +227,14 @@ export default function BookmarkArchive({bookmarks}: {bookmarks: Bookmark[]}) {
       ) : view === 'grid' ? (
         <ul className="mt-2 grid gap-px border border-line bg-line sm:grid-cols-2 xl:grid-cols-3">
           {pageItems.map((bookmark) => (
-            <li key={bookmark.id}>
-              <ArchiveCard bookmark={bookmark} onDelete={handleDelete} isDeleting={isDeleting} />
+            <li key={bookmark.id} className="h-full">
+              <ArchiveCard
+                bookmark={bookmark}
+                onDelete={handleDelete}
+                isDeleting={isDeleting}
+                selectedTagIds={selectedTagIds}
+                onToggleTag={toggleTag}
+              />
             </li>
           ))}
         </ul>
@@ -214,7 +242,13 @@ export default function BookmarkArchive({bookmarks}: {bookmarks: Bookmark[]}) {
         <ul className="mt-2 divide-y divide-line border-y border-line">
           {pageItems.map((bookmark) => (
             <li key={bookmark.id}>
-              <ArchiveRow bookmark={bookmark} onDelete={handleDelete} isDeleting={isDeleting} />
+              <ArchiveRow
+                bookmark={bookmark}
+                onDelete={handleDelete}
+                isDeleting={isDeleting}
+                selectedTagIds={selectedTagIds}
+                onToggleTag={toggleTag}
+              />
             </li>
           ))}
         </ul>
@@ -243,13 +277,85 @@ export default function BookmarkArchive({bookmarks}: {bookmarks: Bookmark[]}) {
   );
 }
 
+/** 押すと絞り込みに反映されるタグ片。絞り込み欄と各ブックマークの両方で使う。 */
+function TagChip({
+  name,
+  count,
+  isSelected,
+  onToggle,
+}: {
+  name: string;
+  count?: number;
+  isSelected: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={isSelected}
+      title={isSelected ? `「${name}」の絞り込みを外す` : `「${name}」で絞り込む`}
+      className={`chip ${isSelected ? 'chip-on' : 'hover:border-dim hover:text-text'}`}
+    >
+      {name}
+      {count !== undefined && <span className="tnum font-mono text-[10px] opacity-50">{count}</span>}
+    </button>
+  );
+}
+
+/**
+ * URL の全文表示とコピー。
+ *
+ * 省略せずに出すのは、ブックマークを開くためではなく URL 自体を貼り付けたい場面が多いため。
+ * select-all を当てているので、コピーボタンが使えない環境でも1クリックで全選択できる。
+ */
+function BookmarkUrl({url}: {url: string}) {
+  const [isCopied, setIsCopied] = useState(false);
+  const copiedTimerRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    return () => window.clearTimeout(copiedTimerRef.current);
+  }, []);
+
+  async function copyUrl() {
+    try {
+      await navigator.clipboard.writeText(url);
+      setIsCopied(true);
+      window.clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = window.setTimeout(() => setIsCopied(false), 1500);
+    } catch {
+      // 非 https など Clipboard API が使えない環境では、select-all による手動コピーに委ねる
+    }
+  }
+
+  return (
+    <div className="flex items-start gap-2">
+      <p className="min-w-0 flex-1 select-all break-all font-mono text-[10px] leading-[1.7] text-faint">
+        {url}
+      </p>
+      <button
+        type="button"
+        onClick={copyUrl}
+        aria-label="URLをコピー"
+        className={`shrink-0 border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] transition-colors ${
+          isCopied ? 'border-gold text-gold' : 'border-line text-faint hover:border-dim hover:text-text'
+        }`}
+      >
+        {isCopied ? 'copied' : 'copy'}
+      </button>
+    </div>
+  );
+}
+
 type ItemProps = {
   bookmark: Bookmark;
   onDelete: (bookmarkId: number) => void;
   isDeleting: boolean;
+  selectedTagIds: number[];
+  onToggleTag: (tagId: number) => void;
 };
 
-function DeleteButton({bookmark, onDelete, isDeleting}: ItemProps) {
+function DeleteButton({bookmark, onDelete, isDeleting}: Pick<ItemProps, 'bookmark' | 'onDelete' | 'isDeleting'>) {
   return (
     <button
       type="button"
@@ -263,40 +369,20 @@ function DeleteButton({bookmark, onDelete, isDeleting}: ItemProps) {
   );
 }
 
-function ArchiveCard({bookmark, onDelete, isDeleting}: ItemProps) {
-  const [cover, ...rest] = bookmark.thumbnails;
-
+function ArchiveCard({bookmark, onDelete, isDeleting, selectedTagIds, onToggleTag}: ItemProps) {
   return (
     <article className="group relative flex h-full flex-col bg-panel transition-colors duration-300 hover:bg-raise">
       <div className="relative aspect-[16/10] overflow-hidden bg-raise">
-        {cover ? (
-          <Image
-            src={cover.url}
-            alt=""
-            fill
-            sizes="(min-width: 1280px) 24vw, (min-width: 640px) 44vw, 92vw"
-            className="object-cover transition-transform duration-700 ease-out group-hover:scale-[1.05]"
-          />
-        ) : (
-          <span
-            aria-hidden="true"
-            className="absolute inset-0 grid place-items-center font-display text-4xl text-line"
-          >
-            栞
-          </span>
-        )}
+        <ThumbnailCarousel
+          thumbnails={bookmark.thumbnails}
+          sizes="(min-width: 1280px) 24vw, (min-width: 640px) 44vw, 92vw"
+        />
 
-        <span className="tnum absolute left-0 top-0 bg-ink/75 px-2 py-1 font-mono text-[10px] text-faint backdrop-blur-sm">
+        <span className="tnum absolute left-0 top-0 z-10 bg-ink/75 px-2 py-1 font-mono text-[10px] text-faint backdrop-blur-sm">
           {String(bookmark.id).padStart(3, '0')}
         </span>
 
-        {rest.length > 0 && (
-          <span className="tnum absolute bottom-2 right-2 bg-ink/75 px-1.5 py-0.5 font-mono text-[10px] text-dim backdrop-blur-sm">
-            +{rest.length}
-          </span>
-        )}
-
-        <div className="absolute right-2 top-2 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100">
+        <div className="absolute right-2 top-2 z-10 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100">
           <DeleteButton bookmark={bookmark} onDelete={onDelete} isDeleting={isDeleting} />
         </div>
       </div>
@@ -311,7 +397,7 @@ function ArchiveCard({bookmark, onDelete, isDeleting}: ItemProps) {
           {bookmark.title || '(無題)'}
         </a>
 
-        <p className="truncate font-mono text-[10px] text-faint">{hostOf(bookmark.url)}</p>
+        <BookmarkUrl url={bookmark.url} />
 
         {bookmark.rating !== null && (
           <div className="flex items-center gap-2">
@@ -323,9 +409,12 @@ function ArchiveCard({bookmark, onDelete, isDeleting}: ItemProps) {
         {bookmark.tags.length > 0 && (
           <div className="mt-auto flex flex-wrap gap-1 pt-1">
             {bookmark.tags.map((tag) => (
-              <span key={tag.id} className="chip">
-                {tag.name}
-              </span>
+              <TagChip
+                key={tag.id}
+                name={tag.name}
+                isSelected={selectedTagIds.includes(tag.id)}
+                onToggle={() => onToggleTag(tag.id)}
+              />
             ))}
           </div>
         )}
@@ -340,12 +429,12 @@ function ArchiveCard({bookmark, onDelete, isDeleting}: ItemProps) {
   );
 }
 
-function ArchiveRow({bookmark, onDelete, isDeleting}: ItemProps) {
-  const [cover, ...rest] = bookmark.thumbnails;
+function ArchiveRow({bookmark, onDelete, isDeleting, selectedTagIds, onToggleTag}: ItemProps) {
+  const [cover] = bookmark.thumbnails;
 
   return (
-    <article className="group flex items-center gap-4 py-3 transition-colors hover:bg-panel">
-      <span className="tnum w-10 shrink-0 pl-1 font-mono text-[11px] text-faint">
+    <article className="group flex items-start gap-4 py-3 transition-colors hover:bg-panel">
+      <span className="tnum w-10 shrink-0 pl-1 pt-1 font-mono text-[11px] text-faint">
         {String(bookmark.id).padStart(3, '0')}
       </span>
 
@@ -357,9 +446,9 @@ function ArchiveRow({bookmark, onDelete, isDeleting}: ItemProps) {
             栞
           </span>
         )}
-        {rest.length > 0 && (
+        {bookmark.thumbnails.length > 1 && (
           <span className="tnum absolute bottom-0 right-0 bg-ink/80 px-1 font-mono text-[9px] text-dim">
-            +{rest.length}
+            {bookmark.thumbnails.length}枚
           </span>
         )}
       </div>
@@ -369,22 +458,27 @@ function ArchiveRow({bookmark, onDelete, isDeleting}: ItemProps) {
           href={bookmark.url}
           target="_blank"
           rel="noreferrer"
-          className="block truncate font-display text-[14px] font-semibold text-text transition-colors hover:text-shu"
+          className="block font-display text-[14px] font-semibold leading-snug text-text transition-colors hover:text-shu"
         >
           {bookmark.title || '(無題)'}
         </a>
-        <p className="truncate font-mono text-[10px] text-faint">{hostOf(bookmark.url)}</p>
+        <div className="mt-1">
+          <BookmarkUrl url={bookmark.url} />
+        </div>
       </div>
 
-      <div className="hidden w-[10rem] shrink-0 flex-wrap gap-1 lg:flex">
-        {bookmark.tags.slice(0, 3).map((tag) => (
-          <span key={tag.id} className="chip">
-            {tag.name}
-          </span>
+      <div className="hidden w-[10rem] shrink-0 flex-wrap gap-1 pt-0.5 lg:flex">
+        {bookmark.tags.map((tag) => (
+          <TagChip
+            key={tag.id}
+            name={tag.name}
+            isSelected={selectedTagIds.includes(tag.id)}
+            onToggle={() => onToggleTag(tag.id)}
+          />
         ))}
       </div>
 
-      <div className="hidden w-[6.5rem] shrink-0 items-center gap-2 sm:flex">
+      <div className="hidden w-[6.5rem] shrink-0 items-center gap-2 pt-1 sm:flex">
         {bookmark.rating !== null && (
           <>
             <StarRating value={bookmark.rating} size={11} />
@@ -393,7 +487,7 @@ function ArchiveRow({bookmark, onDelete, isDeleting}: ItemProps) {
         )}
       </div>
 
-      <div className="shrink-0 pr-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+      <div className="shrink-0 pr-1 pt-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
         <DeleteButton bookmark={bookmark} onDelete={onDelete} isDeleting={isDeleting} />
       </div>
     </article>
