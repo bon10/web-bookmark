@@ -31,12 +31,15 @@ const r2Client = new S3Client({
  * キーにファイル内容の SHA-256 を使うのは、同名ファイルで差し替えたときに URL が変わらず
  * 古い画像がキャッシュに残り続けるのを防ぐため。元のファイル名は使わない（スペースや
  * 記号がそのまま URL に出るのを避ける意味もある）。
+ *
+ * @param bookmarkId ブックマークの ID。既存オブジェクトと同じ場所に置くため、
+ *   プレフィックスは `thumbnails/<ID>/` のまま変えない。
  */
-export async function uploadThumbnail(videoId: number, file: File): Promise<string> {
+export async function uploadThumbnail(bookmarkId: number, file: File): Promise<string> {
   const body = Buffer.from(await file.arrayBuffer());
   const contentHash = createHash('sha256').update(body).digest('hex').slice(0, 16);
   const extension = path.extname(file.name).toLowerCase() || '.jpg';
-  const objectKey = `thumbnails/${videoId}/${contentHash}${extension}`;
+  const objectKey = `thumbnails/${bookmarkId}/${contentHash}${extension}`;
 
   await r2Client.send(
     new PutObjectCommand({
@@ -52,12 +55,12 @@ export async function uploadThumbnail(videoId: number, file: File): Promise<stri
 }
 
 /**
- * 指定した動画のサムネイルのオブジェクトキーを列挙する。
+ * 指定したブックマークのサムネイルのオブジェクトキーを列挙する。
  * R2 にディレクトリの概念は無く一括削除もできないため、削除前の列挙に使う。
  */
-export async function listThumbnailKeys(videoId: number): Promise<string[]> {
+export async function listThumbnailKeys(bookmarkId: number): Promise<string[]> {
   const {Contents} = await r2Client.send(
-    new ListObjectsV2Command({Bucket: bucketName, Prefix: `thumbnails/${videoId}/`}),
+    new ListObjectsV2Command({Bucket: bucketName, Prefix: `thumbnails/${bookmarkId}/`}),
   );
 
   return (Contents ?? [])

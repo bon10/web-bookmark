@@ -1,5 +1,10 @@
 'use server';
 
+// ユビキタス言語: docs/ubiquitous-language.md
+// このモジュールが扱うエンティティは「ブックマーク（Bookmark）」。
+// DB 側のテーブル・カラムは videos / video_url / video_id のままなので、
+// 「ブックマーク」への読み替えはこの層で閉じる（辞書の「用語の不一致」節を参照）。
+
 import {revalidatePath} from 'next/cache';
 import {createClient} from '@/utils/supabase/server';
 import {deleteThumbnail, listThumbnailKeys, uploadThumbnail} from '@/utils/r2Client';
@@ -61,11 +66,14 @@ async function resolveTagId(
   return newTag.id;
 }
 
-export async function addVideo(_prevState: ActionResult, formData: FormData): Promise<ActionResult> {
+export async function addBookmark(
+  _prevState: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
   const title = String(formData.get('title') ?? '').trim();
-  const videoUrl = String(formData.get('video_url') ?? '').trim();
+  const url = String(formData.get('url') ?? '').trim();
 
-  if (!title || !videoUrl) {
+  if (!title || !url) {
     return {error: 'タイトルとURLは必須です'};
   }
 
@@ -76,11 +84,11 @@ export async function addVideo(_prevState: ActionResult, formData: FormData): Pr
   const ratingInput = Number(formData.get('rating'));
   const rating = Number.isFinite(ratingInput) && ratingInput >= 1 ? ratingInput : null;
 
-  const {data: video, error: videoError} = await supabase
+  const {data: bookmark, error: bookmarkError} = await supabase
     .from('videos')
     .insert({
       title,
-      video_url: videoUrl,
+      video_url: url,
       sort_order: Number(formData.get('sort_order')) || 0,
       rating,
       created_at: now,
@@ -89,8 +97,8 @@ export async function addVideo(_prevState: ActionResult, formData: FormData): Pr
     .select('id')
     .single();
 
-  if (videoError || !video) {
-    return {error: `追加に失敗しました: ${videoError?.message}`};
+  if (bookmarkError || !bookmark) {
+    return {error: `追加に失敗しました: ${bookmarkError?.message}`};
   }
 
   const tagNames = String(formData.get('tags') ?? '')
@@ -100,38 +108,42 @@ export async function addVideo(_prevState: ActionResult, formData: FormData): Pr
 
   for (const tagName of tagNames) {
     const tagId = await resolveTagId(supabase, tagName);
-    await supabase.from('video_tags').insert({video_id: video.id, tag_id: tagId});
+    await supabase.from('video_tags').insert({video_id: bookmark.id, tag_id: tagId});
   }
 
-  const thumbnails = formData.getAll('thumbnails').filter((entry): entry is File => entry instanceof File && entry.size > 0);
+  const thumbnails = formData
+    .getAll('thumbnails')
+    .filter((entry): entry is File => entry instanceof File && entry.size > 0);
   const uploadedKeys: string[] = [];
   for (const thumbnail of thumbnails) {
-    uploadedKeys.push(await uploadThumbnail(video.id, thumbnail));
+    uploadedKeys.push(await uploadThumbnail(bookmark.id, thumbnail));
   }
 
   if (uploadedKeys.length > 0) {
     await supabase
       .from('thumbnails')
-      .insert(uploadedKeys.map((thumbnailPath) => ({video_id: video.id, thumbnail_path: thumbnailPath})));
+      .insert(
+        uploadedKeys.map((thumbnailPath) => ({video_id: bookmark.id, thumbnail_path: thumbnailPath})),
+      );
   }
 
   revalidatePath('/');
   return {error: null};
 }
 
-export async function deleteVideo(videoId: number): Promise<ActionResult> {
+export async function deleteBookmark(bookmarkId: number): Promise<ActionResult> {
   const supabase = await createClient();
 
-  const {error: videoTagsError} = await supabase
+  const {error: bookmarkTagsError} = await supabase
     .from('video_tags')
     .delete()
-    .eq('video_id', videoId);
-  if (videoTagsError) {
-    return {error: `タグの関連削除に失敗しました: ${videoTagsError.message}`};
+    .eq('video_id', bookmarkId);
+  if (bookmarkTagsError) {
+    return {error: `タグの関連削除に失敗しました: ${bookmarkTagsError.message}`};
   }
 
   // R2 はディレクトリ単位で消せないので、配下のオブジェクトを列挙して1件ずつ削除する。
-  const objectKeys = await listThumbnailKeys(videoId);
+  const objectKeys = await listThumbnailKeys(bookmarkId);
   for (const objectKey of objectKeys) {
     await deleteThumbnail(objectKey);
   }
@@ -139,14 +151,14 @@ export async function deleteVideo(videoId: number): Promise<ActionResult> {
   const {error: thumbnailsError} = await supabase
     .from('thumbnails')
     .delete()
-    .eq('video_id', videoId);
+    .eq('video_id', bookmarkId);
   if (thumbnailsError) {
     return {error: `サムネイルの削除に失敗しました: ${thumbnailsError.message}`};
   }
 
-  const {error: videoError} = await supabase.from('videos').delete().eq('id', videoId);
-  if (videoError) {
-    return {error: `削除に失敗しました: ${videoError.message}`};
+  const {error: bookmarkError} = await supabase.from('videos').delete().eq('id', bookmarkId);
+  if (bookmarkError) {
+    return {error: `削除に失敗しました: ${bookmarkError.message}`};
   }
 
   revalidatePath('/');
