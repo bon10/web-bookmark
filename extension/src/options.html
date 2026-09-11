@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>書架に納める — 設定</title>
+    <link rel="stylesheet" href="popup.css" />
+    <style>
+      /* 設定画面はタブとして開くので、ポップアップ用の幅指定を外す。 */
+      body {
+        width: auto;
+        max-width: 620px;
+        margin: 0 auto;
+        padding: 0 0 24px;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="bar">
+      <span class="seal" aria-hidden="true">栞</span>
+      <h1>書架に納める — 設定</h1>
+    </header>
+
+    <form id="settings">
+      <label class="field">
+        <span class="kicker">アプリの URL</span>
+        <input type="url" id="app-base-url" required class="mono" placeholder="http://localhost:3000" />
+      </label>
+
+      <label class="field">
+        <span class="kicker">Supabase プロジェクトの URL</span>
+        <input type="url" id="supabase-url" required class="mono" placeholder="https://xxxx.supabase.co" />
+      </label>
+
+      <label class="field">
+        <span class="kicker">Supabase publishable key</span>
+        <input type="text" id="supabase-key" required class="mono" />
+        <p class="hint">
+          アプリの <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> と同じ値。ブラウザへ配信される前提の公開キーなので拡張に置いてよい。
+          R2 の資格情報や secret key はここに入れないこと。
+        </p>
+      </label>
+
+      <p id="message" class="notice" hidden></p>
+
+      <div class="actions">
+        <button type="submit" class="primary">保存して接続を許可する</button>
+      </div>
+    </form>
+
+    <section>
+      <span class="kicker">画像の取得</span>
+      <p class="hint">
+        ページ上の画像は、拡張がその URL から本文を取得し直して送る。そのため任意のサイトへの
+        読み取り許可が必要になる。許可しない場合、動画から抜いた静止画だけが使える。
+      </p>
+      <div class="actions">
+        <button type="button" id="grant-images" class="ghost">すべてのサイトでの画像取得を許可</button>
+        <span id="image-access" class="count"></span>
+      </div>
+    </section>
+
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "ブックマーク書架に納める",
+  "version": "0.1.0",
+  "description": "開いているページから画像候補を集め、タグと評価を付けてブックマーク書架に納める。",
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "書架に納める"
+  },
+  "options_page": "src/options.html",
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "permissions": ["activeTab", "scripting", "storage"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"]
+}
