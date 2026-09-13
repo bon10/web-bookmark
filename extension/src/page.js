@@ -168,9 +168,15 @@ export async function grabVideoFrames(count, maxEdge) {
   if (duration === 0) {
     times.push(previousTime);
   } else {
-    // 冒頭と末尾は黒画面やロゴになりやすいので、3%〜97% の範囲を等間隔に割る。
+    // 冒頭と末尾は黒画面やロゴになりやすいので、3%〜97% の範囲から選ぶ。
+    //
+    // 位置は実行のたびに変える。等間隔に固定すると、そこが暗転や字幕だけの場面だったときに
+    // 何度押しても同じ絵しか出てこないため。ただし完全な無作為だと数枚が同じ場面に
+    // 固まることがあるので、範囲を枚数分の区間に割り、各区間から1点ずつ選ぶ。
+    // 区間の端は避ける（隣の区間と隣接した位置を選んでしまい、ほぼ同じ絵になるのを防ぐ）。
     for (let index = 0; index < count; index += 1) {
-      times.push(duration * (0.03 + (0.94 * (index + 0.5)) / count));
+      const position = (index + 0.1 + 0.8 * Math.random()) / count;
+      times.push(duration * (0.03 + 0.94 * position));
     }
   }
 

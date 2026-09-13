@@ -509,7 +509,10 @@ async function grabFrames() {
 
     if (outcome.kind === 'frames') {
       addFrames(outcome.frames);
-      setNotice('thumb-status', `${outcome.frames.length} 枚を候補に追加しました。`);
+      setNotice(
+        'thumb-status',
+        `${outcome.frames.length} 枚を候補に追加しました。もう一度押すと別の位置から抜きます。`,
+      );
       return;
     }
 
@@ -521,7 +524,10 @@ async function grabFrames() {
       return;
     }
     addFrames(frames);
-    setNotice('thumb-status', `画面キャプチャで ${frames.length} 枚を候補に追加しました。`);
+    setNotice(
+      'thumb-status',
+      `画面キャプチャで ${frames.length} 枚を候補に追加しました。もう一度押すと別の位置から抜きます。`,
+    );
   } catch (error) {
     setNotice('thumb-status', `静止画を抜けませんでした: ${error.message}`);
   } finally {
@@ -543,7 +549,9 @@ async function grabFramesByCapture() {
   let firstState = null;
 
   for (let index = 0; index < CAPTURE_COUNT; index += 1) {
-    const results = await runInPage(freezeVideoAt, [(index + 0.5) / CAPTURE_COUNT]);
+    // canvas 経路と同じ考え方で、区間ごとに1点ずつ無作為に選ぶ（grabVideoFrames のコメントを参照）。
+    const ratio = (index + 0.1 + 0.8 * Math.random()) / CAPTURE_COUNT;
+    const results = await runInPage(freezeVideoAt, [ratio]);
     const frozen = results.map((result) => result.result).find(Boolean);
     if (!frozen) {
       break;
