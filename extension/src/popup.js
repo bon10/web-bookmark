@@ -31,6 +31,8 @@ const state = {
   suggestions: [],
   rating: 0,
   highlighted: 0,
+  /** 下書きの鍵（ページの正規化した URL）。定まるまでは下書きを書かない。 */
+  draftKey: null,
 };
 
 const element = (id) => document.getElementById(id);
@@ -67,6 +69,73 @@ async function runInPage(func, args = []) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// --- 下書き -----------------------------------------------------------------
+
+/**
+ * 下書きに載せる画像の総量の上限。
+ * 動画から抜いた静止画は data URL なので、全部載せると chrome.storage.local を使い切る。
+ */
+const MAX_DRAFT_IMAGE_BYTES = 2 * 1024 * 1024;
+
+/** 打つたびに書き込まないための待ち時間。 */
+const DRAFT_SAVE_DELAY_MS = 400;
+
+let draftTimer;
+
+/** いまの入力内容。送信と下書きの両方で使う。 */
+function currentPayload() {
+  return {
+    title: element('title').value.trim(),
+    url: element('url').value.trim(),
+    rating: state.rating || null,
+    sortOrder: Number(element('sort-order').value) || 0,
+    tags: [...state.tags],
+    images: state.selected.map((id) => {
+      const candidate = state.candidates.find((entry) => entry.id === id);
+      return {kind: candidate.kind, value: candidate.value};
+    }),
+  };
+}
+
+async function saveDraftNow() {
+  if (state.draftKey === null) {
+    return;
+  }
+
+  const payload = currentPayload();
+  const images = [];
+  let remaining = MAX_DRAFT_IMAGE_BYTES;
+  let dropped = 0;
+
+  for (const image of payload.images) {
+    // URL の候補は文字列なので必ず残す。重いのは data URL の方だけ。
+    if (image.kind === 'url') {
+      images.push(image);
+    } else if (image.value.length <= remaining) {
+      remaining -= image.value.length;
+      images.push(image);
+    } else {
+      dropped += 1;
+    }
+  }
+
+  try {
+    await send('saveDraft', {key: state.draftKey, draft: {...payload, images, dropped}});
+  } catch {
+    // 下書きが書けなくても入力は続けられる。ここで操作を止めない。
+  }
+}
+
+/**
+ * 入力が変わったことを下書きに反映する。
+ * ポップアップはタブを切り替えると閉じられ、その時点で画面の状態が消えるため、
+ * 利用者の操作のたびに呼ぶ。
+ */
+function scheduleDraftSave() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => void saveDraftNow(), DRAFT_SAVE_DELAY_MS);
+}
+
 // --- 評価 -------------------------------------------------------------------
 
 function renderRating() {
@@ -96,6 +165,7 @@ function renderRating() {
       // 同じ値をもう一度押したら未評価に戻す。未評価は送信時に null として扱う。
       state.rating = state.rating === value ? 0 : value;
       renderRating();
+      scheduleDraftSave();
     });
 
     box.append(star);
@@ -124,6 +194,7 @@ function renderTags() {
     remove.addEventListener('click', () => {
       state.tags = state.tags.filter((name) => name !== tag);
       renderTags();
+      scheduleDraftSave();
       input.focus();
     });
 
@@ -198,6 +269,7 @@ function commitTag(value) {
   state.highlighted = 0;
   renderTags();
   renderSuggestions();
+  scheduleDraftSave();
 }
 
 function setUpTagInput() {
@@ -240,6 +312,7 @@ function setUpTagInput() {
       state.tags.pop();
       renderTags();
       renderSuggestions();
+      scheduleDraftSave();
     }
   });
 }
@@ -301,6 +374,7 @@ function toggleThumb(id) {
   }
   setNotice('form-error', '');
   renderThumbs();
+  scheduleDraftSave();
   void updateImageAccessPrompt();
 }
 
@@ -527,7 +601,7 @@ async function cropToVideo(dataUrl, rect, devicePixelRatio) {
 
 // --- 画面の組み立て ---------------------------------------------------------
 
-async function setUpForm(draft) {
+async function setUpForm() {
   show('view-form');
   renderRating();
   renderTags();
@@ -584,8 +658,20 @@ async function setUpForm(draft) {
     setNotice('thumb-status', `タグ候補を取得できませんでした: ${error.message}`);
   }
 
-  if (draft && draft.url === element('url').value) {
-    restoreDraft(draft);
+  // 下書きの鍵は正規化した URL。クエリ違いで別の下書きに分かれないようにする。
+  state.draftKey = normalizedUrl ?? tab.url ?? null;
+
+  // 文字入力も下書きに残す。ここで初めて listener を付けるのは、
+  // 上の初期値の代入で下書きを書いてしまわないようにするため。
+  for (const id of ['title', 'url', 'sort-order']) {
+    element(id).addEventListener('input', scheduleDraftSave);
+  }
+
+  if (state.draftKey !== null) {
+    const draft = await send('loadDraft', {key: state.draftKey});
+    if (draft) {
+      restoreDraft(draft);
+    }
   }
 
   await updateImageAccessPrompt();
@@ -593,6 +679,7 @@ async function setUpForm(draft) {
 
 function restoreDraft(draft) {
   element('title').value = draft.title;
+  element('url').value = draft.url;
   element('sort-order').value = draft.sortOrder || '';
   state.tags = draft.tags;
   state.rating = draft.rating ?? 0;
@@ -605,28 +692,24 @@ function restoreDraft(draft) {
   renderRating();
   renderTags();
   renderThumbs();
-  setNotice('thumb-status', '送信に失敗した下書きを戻しました。');
+
+  setNotice(
+    'thumb-status',
+    draft.dropped > 0
+      ? `前回の入力を戻しました（動画から抜いた静止画 ${draft.dropped} 枚は容量のため戻せていません）。`
+      : '前回の入力を戻しました。',
+  );
 }
 
 async function submit(event) {
   event.preventDefault();
   setNotice('form-error', '');
 
-  const payload = {
-    title: element('title').value.trim(),
-    url: element('url').value.trim(),
-    rating: state.rating || null,
-    sortOrder: Number(element('sort-order').value) || 0,
-    tags: state.tags,
-    images: state.selected.map((id) => {
-      const candidate = state.candidates.find((entry) => entry.id === id);
-      return {kind: candidate.kind, value: candidate.value};
-    }),
-  };
+  const payload = currentPayload();
 
   // 権限ダイアログでポップアップが閉じても入力を失わないよう、先に下書きを残す。
   // await すると次の permissions.request が利用者の操作の外になるため、待たない。
-  void send('saveDraft', payload);
+  void saveDraftNow();
 
   // 選んだ画像のホストの権限をここで要求する。permissions.request は利用者の操作の中から
   // しか呼べないので、await を挟む前に呼ぶ。既に持っている権限なら確認は出ず true が返る。
@@ -646,7 +729,8 @@ async function submit(event) {
   button.textContent = '保存中';
 
   try {
-    await send('save', payload);
+    // key は送信に成功した時点で下書きを捨てるために渡す。
+    await send('save', {...payload, key: state.draftKey});
     element('view-form').hidden = true;
     setNotice('form-done', '納めました。');
     element('form-done').hidden = false;
@@ -656,7 +740,7 @@ async function submit(event) {
   } catch (error) {
     setNotice('form-error', error.message);
     // 入力を捨てずに残す。次に同じページで開いたときに戻す。
-    await send('saveDraft', payload);
+    await saveDraftNow();
   } finally {
     button.disabled = false;
     button.textContent = '追加する';
@@ -672,7 +756,7 @@ async function signIn(event) {
       email: element('email').value,
       password: element('password').value,
     });
-    await setUpForm(null);
+    await setUpForm();
   } catch (error) {
     setNotice('login-error', error.message);
   }
@@ -700,7 +784,7 @@ async function main() {
     await updateImageAccessPrompt();
   });
 
-  const {configured, signedIn, draft} = await send('getState');
+  const {configured, signedIn} = await send('getState');
 
   if (!configured) {
     show('view-unconfigured');
@@ -710,7 +794,7 @@ async function main() {
     show('view-login');
     return;
   }
-  await setUpForm(draft);
+  await setUpForm();
 }
 
 void main();
