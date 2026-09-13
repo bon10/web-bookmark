@@ -39,3 +39,4 @@
 | # | タイトル | ステータス | タグ |
 | --- | --- | --- | --- |
 | [001](adr-001-capture-via-app-api.md) | 拡張からのブックマーク登録はアプリの API 経由にする | 承認済み | Chrome拡張, 認証, 取り込み, CORS, RLS |
+| [002](adr-002-archive-state-in-url.md) | 書架の一覧の状態は URL のクエリを正とする | 承認済み | 書架, 一覧, URL, 履歴, localStorage |
