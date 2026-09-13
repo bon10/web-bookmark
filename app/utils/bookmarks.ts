@@ -12,15 +12,38 @@ import {normalizeBookmarkUrl} from '@/utils/bookmarkUrl';
 
 export type BookmarkClient = SupabaseClient<Database>;
 
+// サムネイルの上限は「枚数」「1枚の大きさ」「一度に送る合計」の3つで、役割が別々。
+// 数字は次の順に収まっていること。崩れると、どれかの規則が名ばかりになる。
+//
+//   next.config.js の bodySizeLimit（16MB）
+//     > MAX_TOTAL_THUMBNAIL_BYTES（15MB）… 一度に送れる合計
+//       > MAX_THUMBNAIL_BYTES（8MB）… 1枚の上限
+//
+// 枚数の上限は容量とは別の軸で、掛け算では上の合計に収まらない（10枚 × 8MB ＝ 80MB）。
+// 10枚すべてを一度に送れるのは1枚あたり平均 1.5MB までのときで、それを超えると
+// 枚数に達する前に合計で止まる。拡張が抜く静止画は1枚 700KB 前後なので、通常は収まる。
+
 /**
- * 1件に添付できるサムネイルの上限。拡張が出す候補（10枚前後）を全部選んでも通る値にし、
- * これを超える要求は受け取らない。Route Handler は誰でも叩ける口なので、
- * 画面側の制限とは別に、この層でも必ず検査する。
+ * 1件に添付できるサムネイルの枚数の上限。拡張が出す候補（10枚前後）を全部選んでも通る値にする。
+ * Route Handler は誰でも叩ける口なので、画面側の制限とは別に、この層でも必ず検査する。
  */
 export const MAX_THUMBNAILS = 10;
 
-/** 1枚あたりのサイズ上限。R2 への転送とブラウザの描画が現実的に収まる範囲。 */
+/**
+ * 1枚あたりのサイズ上限。R2 への転送とブラウザの描画が現実的に収まる範囲。
+ * 「この1枚が大きすぎる」を、合計に達する前に指摘するための規則。
+ */
 export const MAX_THUMBNAIL_BYTES = 8 * 1024 * 1024;
+
+/**
+ * 一度に送れるサムネイルの合計サイズ。
+ *
+ * 画面からの登録・編集は Server Action を通るため、Next.js が本文の大きさを見て
+ * リクエストを打ち切る（next.config.js の `serverActions.bodySizeLimit`）。打ち切られると
+ * この層まで届かず、利用者には理由の分からないエラーだけが出る。そこで設定値より内側に
+ * 上限を置き、こちらの言葉で先に知らせる。**next.config.js の値を変えるときはここも合わせること。**
+ */
+export const MAX_TOTAL_THUMBNAIL_BYTES = 15 * 1024 * 1024;
 
 /** 受け取る画像形式。ここに無い Content-Type は拒否する。 */
 export const ALLOWED_THUMBNAIL_TYPES = [
@@ -198,6 +221,12 @@ function validate(input: BookmarkFields, thumbnails: File[]): string | null {
     if (!ALLOWED_THUMBNAIL_TYPES.includes(thumbnail.type)) {
       return `対応していない画像形式です (${thumbnail.type || '不明'})`;
     }
+  }
+
+  const totalBytes = thumbnails.reduce((total, thumbnail) => total + thumbnail.size, 0);
+  if (totalBytes > MAX_TOTAL_THUMBNAIL_BYTES) {
+    const asMegabytes = (bytes: number) => (bytes / 1024 / 1024).toFixed(1);
+    return `サムネイルの合計サイズは${asMegabytes(MAX_TOTAL_THUMBNAIL_BYTES)}MBまでです（今回は${asMegabytes(totalBytes)}MB）。枚数を減らすか、分けて登録してください`;
   }
 
   return null;
