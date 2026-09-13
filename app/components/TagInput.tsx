@@ -11,9 +11,18 @@ const MAX_SUGGESTIONS = 8;
  * 確定分は隠し input にカンマで連結して載せる。
  *
  * @param suggestions 既に tags テーブルにあるタグ名。候補の母集合になる。
+ * @param defaultTags 編集時に既に付いているタグ名。
  */
-export default function TagInput({name, suggestions}: {name: string; suggestions: string[]}) {
-  const [tags, setTags] = useState<string[]>([]);
+export default function TagInput({
+  name,
+  suggestions,
+  defaultTags = [],
+}: {
+  name: string;
+  suggestions: string[];
+  defaultTags?: string[];
+}) {
+  const [tags, setTags] = useState<string[]>(defaultTags);
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);

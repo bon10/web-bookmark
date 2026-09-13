@@ -7,7 +7,7 @@
 
 import {revalidatePath} from 'next/cache';
 import {createClient} from '@/utils/supabase/server';
-import {createBookmark, destroyBookmark} from '@/utils/bookmarks';
+import {createBookmark, destroyBookmark, updateBookmark} from '@/utils/bookmarks';
 
 export type ActionResult = {error: string} | {error: null};
 
@@ -36,28 +36,67 @@ export async function signOut(): Promise<void> {
   revalidatePath('/');
 }
 
+/** 登録フォームと編集フォームで同じ項目を読む。 */
+function readFields(formData: FormData) {
+  // videos.rating には 1〜5 の CHECK 制約があるため、未入力と 0 は null にする。
+  const ratingInput = Number(formData.get('rating'));
+
+  return {
+    title: String(formData.get('title') ?? '').trim(),
+    url: String(formData.get('url') ?? '').trim(),
+    rating: Number.isFinite(ratingInput) && ratingInput >= 1 ? ratingInput : null,
+    sortOrder: Number(formData.get('sort_order')) || 0,
+    tagNames: String(formData.get('tags') ?? '')
+      .split(',')
+      .map((tag) => tag.trim())
+      .filter(Boolean),
+  };
+}
+
+/** 今回新しく添付された画像だけを取り出す。空の input は除く。 */
+function readThumbnails(formData: FormData): File[] {
+  return formData
+    .getAll('thumbnails')
+    .filter((entry): entry is File => entry instanceof File && entry.size > 0);
+}
+
 export async function addBookmark(
   _prevState: ActionResult,
   formData: FormData,
 ): Promise<ActionResult> {
   const supabase = await createClient();
 
-  // videos.rating には 1〜5 の CHECK 制約があるため、未入力と 0 は null にする。
-  const ratingInput = Number(formData.get('rating'));
-  const rating = Number.isFinite(ratingInput) && ratingInput >= 1 ? ratingInput : null;
-
   const result = await createBookmark(supabase, {
-    title: String(formData.get('title') ?? '').trim(),
-    url: String(formData.get('url') ?? '').trim(),
-    rating,
-    sortOrder: Number(formData.get('sort_order')) || 0,
-    tagNames: String(formData.get('tags') ?? '')
-      .split(',')
-      .map((tag) => tag.trim())
-      .filter(Boolean),
-    thumbnails: formData
-      .getAll('thumbnails')
-      .filter((entry): entry is File => entry instanceof File && entry.size > 0),
+    ...readFields(formData),
+    thumbnails: readThumbnails(formData),
+  });
+
+  if (!result.ok) {
+    return {error: result.error};
+  }
+
+  revalidatePath('/');
+  return {error: null};
+}
+
+export async function editBookmark(
+  _prevState: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const bookmarkId = Number(formData.get('id'));
+  if (!Number.isInteger(bookmarkId) || bookmarkId <= 0) {
+    return {error: '編集対象のブックマークが分かりません'};
+  }
+
+  const supabase = await createClient();
+
+  const result = await updateBookmark(supabase, bookmarkId, {
+    ...readFields(formData),
+    addedThumbnails: readThumbnails(formData),
+    removedThumbnailIds: formData
+      .getAll('removed_thumbnails')
+      .map((value) => Number(value))
+      .filter((id) => Number.isInteger(id) && id > 0),
   });
 
   if (!result.ok) {

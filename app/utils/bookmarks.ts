@@ -31,14 +31,25 @@ export const ALLOWED_THUMBNAIL_TYPES = [
   'image/avif',
 ];
 
-export type NewBookmark = {
+/** 登録と更新で共通の入力。 */
+export type BookmarkFields = {
   title: string;
   url: string;
   /** 未評価は null。videos.rating に 1〜5 の CHECK 制約があるため 0 を入れない。 */
   rating: number | null;
   sortOrder: number;
   tagNames: string[];
+};
+
+export type NewBookmark = BookmarkFields & {
   thumbnails: File[];
+};
+
+export type BookmarkEdit = BookmarkFields & {
+  /** 新しく足すサムネイル。 */
+  addedThumbnails: File[];
+  /** 外すサムネイルの thumbnails.id。R2 のオブジェクトも消す。 */
+  removedThumbnailIds: number[];
 };
 
 /**
@@ -74,11 +85,84 @@ async function resolveTagId(client: BookmarkClient, tagName: string): Promise<nu
   return newTag.id;
 }
 
+/** タグ名を解決して関連を張る。既に張ってある関連は先に消しておくこと。 */
+async function attachTags(
+  client: BookmarkClient,
+  bookmarkId: number,
+  tagNames: string[],
+): Promise<void> {
+  for (const tagName of tagNames) {
+    const tagId = await resolveTagId(client, tagName);
+    await client.from('video_tags').insert({video_id: bookmarkId, tag_id: tagId});
+  }
+}
+
+/** 画像を R2 に保存し、thumbnails に行を足す。 */
+async function addThumbnails(
+  client: BookmarkClient,
+  bookmarkId: number,
+  thumbnails: File[],
+): Promise<void> {
+  const uploadedKeys: string[] = [];
+  for (const thumbnail of thumbnails) {
+    uploadedKeys.push(await uploadThumbnail(bookmarkId, thumbnail));
+  }
+
+  if (uploadedKeys.length > 0) {
+    await client.from('thumbnails').insert(
+      uploadedKeys.map((thumbnailPath) => ({
+        video_id: bookmarkId,
+        thumbnail_path: thumbnailPath,
+      })),
+    );
+  }
+}
+
+/**
+ * 指定したサムネイルを R2 と DB の両方から消す。
+ *
+ * `video_id` も条件に入れるのは、別のブックマークのサムネイルの id を渡されても
+ * 消えないようにするため（id だけで消すと取り違えが起きうる）。
+ */
+async function removeThumbnails(
+  client: BookmarkClient,
+  bookmarkId: number,
+  thumbnailIds: number[],
+): Promise<void> {
+  if (thumbnailIds.length === 0) {
+    return;
+  }
+
+  const {data: rows} = await client
+    .from('thumbnails')
+    .select('id, thumbnail_path')
+    .eq('video_id', bookmarkId)
+    .in('id', thumbnailIds);
+
+  if (!rows || rows.length === 0) {
+    return;
+  }
+
+  for (const row of rows) {
+    await deleteThumbnail(row.thumbnail_path);
+  }
+
+  await client
+    .from('thumbnails')
+    .delete()
+    .in(
+      'id',
+      rows.map((row) => row.id),
+    );
+}
+
 /**
  * 入力の検査。画面からの送信と拡張からの送信で同じ規則を通すため、ここに集める。
  * 戻り値は最初に見つかった不備の説明。不備が無ければ null。
+ *
+ * @param thumbnails 今回新しく受け取る画像。既に保存済みのものは数えない。
  */
-function validate(input: NewBookmark): string | null {
+function validate(input: BookmarkFields, thumbnails: File[]): string | null {
   if (!input.title) {
     return 'タイトルは必須です';
   }
@@ -104,10 +188,10 @@ function validate(input: NewBookmark): string | null {
     return '表示順は整数で指定してください';
   }
 
-  if (input.thumbnails.length > MAX_THUMBNAILS) {
+  if (thumbnails.length > MAX_THUMBNAILS) {
     return `サムネイルは${MAX_THUMBNAILS}枚までです`;
   }
-  for (const thumbnail of input.thumbnails) {
+  for (const thumbnail of thumbnails) {
     if (thumbnail.size > MAX_THUMBNAIL_BYTES) {
       return `サムネイル1枚のサイズは${MAX_THUMBNAIL_BYTES / 1024 / 1024}MBまでです`;
     }
@@ -129,7 +213,7 @@ export async function createBookmark(
   client: BookmarkClient,
   input: NewBookmark,
 ): Promise<CreateBookmarkResult> {
-  const invalid = validate(input);
+  const invalid = validate(input, input.thumbnails);
   if (invalid) {
     return {ok: false, error: invalid};
   }
@@ -153,28 +237,58 @@ export async function createBookmark(
     return {ok: false, error: `追加に失敗しました: ${bookmarkError?.message}`};
   }
 
-  for (const tagName of input.tagNames) {
-    const tagId = await resolveTagId(client, tagName);
-    await client.from('video_tags').insert({video_id: bookmark.id, tag_id: tagId});
-  }
-
-  const uploadedKeys: string[] = [];
-  for (const thumbnail of input.thumbnails) {
-    uploadedKeys.push(await uploadThumbnail(bookmark.id, thumbnail));
-  }
-
-  if (uploadedKeys.length > 0) {
-    await client
-      .from('thumbnails')
-      .insert(
-        uploadedKeys.map((thumbnailPath) => ({
-          video_id: bookmark.id,
-          thumbnail_path: thumbnailPath,
-        })),
-      );
-  }
+  await attachTags(client, bookmark.id, input.tagNames);
+  await addThumbnails(client, bookmark.id, input.thumbnails);
 
   return {ok: true, bookmarkId: bookmark.id};
+}
+
+/**
+ * ブックマークを1件書き換える。
+ *
+ * タグは「いったん全部外してから張り直す」。差分を求めるより単純で、件数が少ないため
+ * 負荷も問題にならない。サムネイルは既存のものを残したまま、外す指定のものだけを消し、
+ * 新しく受け取ったものを足す（既存を全部消して入れ直すと、R2 のキーが変わって
+ * 画像の URL が無駄に変わる）。
+ */
+export async function updateBookmark(
+  client: BookmarkClient,
+  bookmarkId: number,
+  input: BookmarkEdit,
+): Promise<CreateBookmarkResult> {
+  const invalid = validate(input, input.addedThumbnails);
+  if (invalid) {
+    return {ok: false, error: invalid};
+  }
+
+  const {error: bookmarkError} = await client
+    .from('videos')
+    .update({
+      title: input.title,
+      video_url: input.url,
+      sort_order: input.sortOrder,
+      rating: input.rating,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', bookmarkId);
+
+  if (bookmarkError) {
+    return {ok: false, error: `更新に失敗しました: ${bookmarkError.message}`};
+  }
+
+  const {error: tagsError} = await client
+    .from('video_tags')
+    .delete()
+    .eq('video_id', bookmarkId);
+  if (tagsError) {
+    return {ok: false, error: `タグの張り替えに失敗しました: ${tagsError.message}`};
+  }
+  await attachTags(client, bookmarkId, input.tagNames);
+
+  await removeThumbnails(client, bookmarkId, input.removedThumbnailIds);
+  await addThumbnails(client, bookmarkId, input.addedThumbnails);
+
+  return {ok: true, bookmarkId};
 }
 
 /**

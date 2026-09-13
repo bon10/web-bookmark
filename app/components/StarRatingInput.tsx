@@ -10,9 +10,11 @@ const STEPS = Array.from({length: MAX_RATING * 2}, (_, index) => (index + 1) / 2
 /**
  * ブックマークの評価の入力欄。値は隠し input で Server Action に渡す。
  * 未評価は空文字にしておく（DB 側 videos.rating の CHECK 制約が 1〜5 のため、0 を送らない）。
+ *
+ * @param defaultValue 編集時の初期値。未評価は 0 を渡す。
  */
-export default function StarRatingInput({name}: {name: string}) {
-  const [value, setValue] = useState(0);
+export default function StarRatingInput({name, defaultValue = 0}: {name: string; defaultValue?: number}) {
+  const [value, setValue] = useState(defaultValue);
   const [hovered, setHovered] = useState<number | null>(null);
 
   const shown = hovered ?? value;

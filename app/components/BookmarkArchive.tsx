@@ -5,33 +5,85 @@
 
 import {useEffect, useMemo, useRef, useState, useTransition} from 'react';
 import Image from 'next/image';
+import {usePathname, useSearchParams} from 'next/navigation';
 import ReactPaginate from 'react-paginate';
 import StarRating from '@/components/StarRating';
 import ThumbnailCarousel from '@/components/ThumbnailCarousel';
+import EditBookmarkDialog from '@/components/EditBookmarkDialog';
 import {deleteBookmark} from '@/app/actions';
+import {
+  DEFAULT_SORT_KEY,
+  DEFAULT_VIEW_MODE,
+  SORT_OPTIONS,
+  defaultDirFor,
+  parseSortDir,
+  parseSortKey,
+  parseViewMode,
+  readArchiveView,
+  writeArchiveView,
+  type SortDir,
+  type SortKey,
+  type ViewMode,
+} from '@/utils/archiveView';
 
 export type Bookmark = {
   id: number;
   title: string | null;
   url: string;
   rating: number | null;
+  /** 並べ替えの「追加順」に使う。ISO 8601 の文字列なので辞書順の比較で時刻順になる。 */
+  createdAt: string;
+  sortOrder: number;
   tags: {id: number; name: string}[];
   thumbnails: {id: number; url: string}[];
 };
-
-type ViewMode = 'grid' | 'list';
 
 const BOOKMARKS_PER_PAGE = 30;
 
 // タグが増えると絞り込み欄だけで画面が埋まるため、既定ではこの件数までしか出さない。
 const TAG_COLLAPSED_COUNT = 12;
 
-export default function BookmarkArchive({bookmarks}: {bookmarks: Bookmark[]}) {
-  const [query, setQuery] = useState('');
-  const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
+function parseTagIds(value: string | null): number[] {
+  return (value ?? '')
+    .split(',')
+    .map((id) => Number(id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+}
+
+export default function BookmarkArchive({
+  bookmarks,
+  tagSuggestions,
+}: {
+  bookmarks: Bookmark[];
+  tagSuggestions: string[];
+}) {
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+
+  // 一覧の状態は URL のクエリを正とする。手元の state に写して持たないのは、
+  // 戻る・進むで URL が変わったときに、画面がその状態へ素直に追従するようにするため。
+  const selectedTagIds = useMemo(() => parseTagIds(searchParams.get('tags')), [searchParams]);
+  const sortKey = parseSortKey(searchParams.get('sort')) ?? DEFAULT_SORT_KEY;
+  const sortDir = parseSortDir(searchParams.get('dir')) ?? defaultDirFor(sortKey);
+  const view = parseViewMode(searchParams.get('view')) ?? DEFAULT_VIEW_MODE;
+  // URL では 1 始まり。内部は 0 始まりで持つ。
+  const currentPage = Math.max(0, Number(searchParams.get('page') ?? '1') - 1);
+  const editingId = Number(searchParams.get('edit')) || null;
+
+  // 検索語だけは打つたびに描き直したいので手元にも持ち、URL へは写すだけにする。
+  const urlQuery = searchParams.get('q') ?? '';
+  const [query, setQuery] = useState(urlQuery);
+
+  // 戻る・進むや、共有された URL を開いたときに検索欄を合わせる。
+  // エフェクトではなくレンダー中に調整するのは、URL が変わってから入力欄が追いつくまでの
+  // 1回分の再描画を挟まないため（React の「props が変わったときに state を調整する」書き方）。
+  const [syncedQuery, setSyncedQuery] = useState(urlQuery);
+  if (syncedQuery !== urlQuery) {
+    setSyncedQuery(urlQuery);
+    setQuery(urlQuery);
+  }
+
   const [showAllTags, setShowAllTags] = useState(false);
-  const [view, setView] = useState<ViewMode>('grid');
-  const [currentPage, setCurrentPage] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isDeleting, startDeleting] = useTransition();
 
@@ -83,33 +135,155 @@ export default function BookmarkArchive({bookmarks}: {bookmarks: Bookmark[]}) {
     });
   }, [bookmarks, query, selectedTagIds]);
 
-  const pageCount = Math.ceil(filtered.length / BOOKMARKS_PER_PAGE);
+  const sorted = useMemo(() => {
+    const factor = sortDir === 'asc' ? 1 : -1;
+
+    // 同値のときは id の昇順で固定し、並べ替えのたびに順番が揺れないようにする。
+    return [...filtered].sort((a, b) => {
+      if (sortKey === 'created') {
+        return factor * a.createdAt.localeCompare(b.createdAt) || a.id - b.id;
+      }
+      if (sortKey === 'rating') {
+        // 未評価は比べる値が無いので、昇順でも降順でも末尾に送る。
+        if (a.rating === null || b.rating === null) {
+          if (a.rating === b.rating) {
+            return a.id - b.id;
+          }
+          return a.rating === null ? 1 : -1;
+        }
+        return factor * (a.rating - b.rating) || a.id - b.id;
+      }
+      return factor * (a.sortOrder - b.sortOrder) || a.id - b.id;
+    });
+  }, [filtered, sortKey, sortDir]);
+
+  const pageCount = Math.ceil(sorted.length / BOOKMARKS_PER_PAGE);
   // 削除で件数が減ると currentPage が最終ページを追い越すことがあるので、参照時に丸める。
   const page = Math.min(currentPage, Math.max(0, pageCount - 1));
-  const pageItems = filtered.slice(page * BOOKMARKS_PER_PAGE, (page + 1) * BOOKMARKS_PER_PAGE);
+  const pageItems = sorted.slice(page * BOOKMARKS_PER_PAGE, (page + 1) * BOOKMARKS_PER_PAGE);
+
+  // 編集対象。削除済みの id が URL に残っていた場合は無いものとして扱う。
+  const editing = editingId === null ? null : bookmarks.find((item) => item.id === editingId) ?? null;
 
   // ページを移動したら先頭まで戻す。
   useEffect(() => {
     window.scrollTo({top: 0, behavior: 'smooth'});
   }, [currentPage]);
 
+  /**
+   * 一覧の状態を URL に書く。既定値はクエリに出さず、素の URL を短く保つ。
+   *
+   * 既定は pushState。**戻るボタンで直前の絞り込み・並び・ページに戻れるようにするため**
+   * （replaceState だけだと履歴が積まれず、戻ると書架そのものから出てしまう）。
+   * 文字入力のように連続して変わるものだけ replaceState にし、1文字ごとに履歴が増えるのを防ぐ。
+   *
+   * Next の router ではなく history API を使うのは、ここでの状態変化がすべてクライアント側の
+   * 処理で、サーバーから取り直す必要がないため。pushState / replaceState が Next の router と
+   * 同期することは公式ドキュメントに明記されている。
+   */
+  function writeParams(updates: Record<string, string | null>, mode: 'push' | 'replace' = 'push') {
+    const params = new URLSearchParams(searchParams.toString());
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === null) {
+        params.delete(key);
+      } else {
+        params.set(key, value);
+      }
+    }
+
+    const queryString = params.toString();
+    const url = queryString === '' ? pathname : `${pathname}?${queryString}`;
+    if (mode === 'push') {
+      window.history.pushState(null, '', url);
+    } else {
+      window.history.replaceState(null, '', url);
+    }
+  }
+
+  // 前回の見え方（並べ替えと表示形式）を復元する。初回の描画後に一度だけ行う。
+  // URL に指定があるときは何もしない。共有された URL の見え方を手元の記憶で
+  // 上書きしてしまわないため。履歴には積まない（戻る先が増えると戻りにくくなる）。
+  const didRestoreView = useRef(false);
+  useEffect(() => {
+    if (didRestoreView.current) {
+      return;
+    }
+    didRestoreView.current = true;
+
+    if (searchParams.has('sort') || searchParams.has('dir') || searchParams.has('view')) {
+      return;
+    }
+
+    const stored = readArchiveView();
+    const storedSort = stored.sort ?? DEFAULT_SORT_KEY;
+    const updates: Record<string, string | null> = {};
+
+    if (storedSort !== DEFAULT_SORT_KEY) {
+      updates.sort = storedSort;
+    }
+    if (stored.dir && stored.dir !== defaultDirFor(storedSort)) {
+      updates.dir = stored.dir;
+    }
+    if (stored.view && stored.view !== DEFAULT_VIEW_MODE) {
+      updates.view = stored.view;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      writeParams(updates, 'replace');
+    }
+  });
+
+  // 見え方が変わったら覚える。次に書架を開いたときの既定値になる。
+  useEffect(() => {
+    writeArchiveView({sort: sortKey, dir: sortDir, view});
+  }, [sortKey, sortDir, view]);
+
   // 絞り込みを変えると総ページ数が変わるため、条件を触るたびに先頭ページへ戻す。
   function updateQuery(nextQuery: string) {
     setQuery(nextQuery);
-    setCurrentPage(0);
+    // 打っている最中は履歴を積まない。空にしたらクエリごと消す。
+    writeParams({q: nextQuery.trim() === '' ? null : nextQuery, page: null}, 'replace');
   }
 
   function toggleTag(tagId: number) {
-    setSelectedTagIds((current) =>
-      current.includes(tagId) ? current.filter((id) => id !== tagId) : [...current, tagId],
-    );
-    setCurrentPage(0);
+    const nextTagIds = selectedTagIds.includes(tagId)
+      ? selectedTagIds.filter((id) => id !== tagId)
+      : [...selectedTagIds, tagId];
+
+    writeParams({tags: nextTagIds.length > 0 ? nextTagIds.join(',') : null, page: null});
   }
 
   function clearFilters() {
     setQuery('');
-    setSelectedTagIds([]);
-    setCurrentPage(0);
+    writeParams({q: null, tags: null, page: null});
+  }
+
+  function changeView(nextView: ViewMode) {
+    writeParams({view: nextView === DEFAULT_VIEW_MODE ? null : nextView});
+  }
+
+  function changePage(nextPage: number) {
+    writeParams({page: nextPage > 0 ? String(nextPage + 1) : null});
+  }
+
+  /** 編集を閉じるときは履歴を積まない。積むと、戻るボタンで閉じたはずの編集が開き直す。 */
+  function closeEdit() {
+    writeParams({edit: null}, 'replace');
+  }
+
+  /**
+   * 並べ替えの基準を変える。同じ基準をもう一度押したときは昇順・降順を入れ替える。
+   * 並びが変わると何ページ目かの意味が変わるため、先頭ページへ戻す。
+   */
+  function changeSort(nextKey: SortKey) {
+    const nextDir: SortDir =
+      nextKey === sortKey ? (sortDir === 'asc' ? 'desc' : 'asc') : defaultDirFor(nextKey);
+
+    writeParams({
+      sort: nextKey === DEFAULT_SORT_KEY ? null : nextKey,
+      dir: nextDir === defaultDirFor(nextKey) ? null : nextDir,
+      page: null,
+    });
   }
 
   function handleDelete(bookmarkId: number) {
@@ -147,12 +321,42 @@ export default function BookmarkArchive({bookmarks}: {bookmarks: Bookmark[]}) {
             />
           </div>
 
+          {/* 並べ替え。押している基準をもう一度押すと昇順・降順が入れ替わる。 */}
+          <div className="flex border border-line">
+            {SORT_OPTIONS.map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => changeSort(option.key)}
+                aria-pressed={sortKey === option.key}
+                title={
+                  sortKey === option.key
+                    ? `${option.label}の昇順・降順を入れ替える`
+                    : `${option.label}で並べ替える`
+                }
+                className={`flex items-center gap-1 px-2.5 py-2 text-[11px] transition-colors ${
+                  sortKey === option.key ? 'bg-shu/[0.12] text-shu-lit' : 'text-faint hover:text-text'
+                }`}
+              >
+                {option.label}
+                {sortKey === option.key && (
+                  <span aria-hidden="true" className="font-mono text-[10px]">
+                    {sortDir === 'asc' ? '↑' : '↓'}
+                  </span>
+                )}
+                <span className="sr-only">
+                  {sortKey === option.key ? (sortDir === 'asc' ? '（昇順）' : '（降順）') : ''}
+                </span>
+              </button>
+            ))}
+          </div>
+
           <div className="flex border border-line">
             {(['grid', 'list'] as const).map((mode) => (
               <button
                 key={mode}
                 type="button"
-                onClick={() => setView(mode)}
+                onClick={() => changeView(mode)}
                 aria-pressed={view === mode}
                 className={`px-3 py-2 font-mono text-[11px] uppercase tracking-[0.16em] transition-colors ${
                   view === mode ? 'bg-shu/[0.12] text-shu-lit' : 'text-faint hover:text-text'
@@ -231,6 +435,7 @@ export default function BookmarkArchive({bookmarks}: {bookmarks: Bookmark[]}) {
               <ArchiveCard
                 bookmark={bookmark}
                 onDelete={handleDelete}
+                onEdit={(bookmarkId) => writeParams({edit: String(bookmarkId)})}
                 isDeleting={isDeleting}
                 selectedTagIds={selectedTagIds}
                 onToggleTag={toggleTag}
@@ -245,6 +450,7 @@ export default function BookmarkArchive({bookmarks}: {bookmarks: Bookmark[]}) {
               <ArchiveRow
                 bookmark={bookmark}
                 onDelete={handleDelete}
+                onEdit={(bookmarkId) => writeParams({edit: String(bookmarkId)})}
                 isDeleting={isDeleting}
                 selectedTagIds={selectedTagIds}
                 onToggleTag={toggleTag}
@@ -263,7 +469,7 @@ export default function BookmarkArchive({bookmarks}: {bookmarks: Bookmark[]}) {
           pageCount={pageCount}
           marginPagesDisplayed={1}
           pageRangeDisplayed={3}
-          onPageChange={({selected}) => setCurrentPage(selected)}
+          onPageChange={({selected}) => changePage(selected)}
           containerClassName={'pagination'}
           activeClassName={'active'}
           pageClassName={'page'}
@@ -271,6 +477,14 @@ export default function BookmarkArchive({bookmarks}: {bookmarks: Bookmark[]}) {
           nextClassName={'next'}
           disabledClassName={'disabled'}
           forcePage={page}
+        />
+      )}
+
+      {editing && (
+        <EditBookmarkDialog
+          bookmark={editing}
+          tagSuggestions={tagSuggestions}
+          onClose={closeEdit}
         />
       )}
     </div>
@@ -350,26 +564,48 @@ function BookmarkUrl({url}: {url: string}) {
 type ItemProps = {
   bookmark: Bookmark;
   onDelete: (bookmarkId: number) => void;
+  onEdit: (bookmarkId: number) => void;
   isDeleting: boolean;
   selectedTagIds: number[];
   onToggleTag: (tagId: number) => void;
 };
 
-function DeleteButton({bookmark, onDelete, isDeleting}: Pick<ItemProps, 'bookmark' | 'onDelete' | 'isDeleting'>) {
+/** 一覧の上に重ねる小さな操作ボタン。編集と削除で見た目を揃える。 */
+const overlayButtonClass =
+  'border border-line bg-ink/70 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-faint backdrop-blur-sm transition-colors hover:border-shu hover:text-shu-lit disabled:opacity-40';
+
+function ItemActions({
+  bookmark,
+  onDelete,
+  onEdit,
+  isDeleting,
+}: Pick<ItemProps, 'bookmark' | 'onDelete' | 'onEdit' | 'isDeleting'>) {
+  const name = bookmark.title ?? bookmark.url;
+
   return (
-    <button
-      type="button"
-      onClick={() => onDelete(bookmark.id)}
-      disabled={isDeleting}
-      aria-label={`「${bookmark.title ?? bookmark.url}」を削除`}
-      className="border border-line bg-ink/70 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-faint backdrop-blur-sm transition-colors hover:border-shu hover:text-shu-lit disabled:opacity-40"
-    >
-      del
-    </button>
+    <div className="flex gap-1">
+      <button
+        type="button"
+        onClick={() => onEdit(bookmark.id)}
+        aria-label={`「${name}」を編集`}
+        className={overlayButtonClass}
+      >
+        edit
+      </button>
+      <button
+        type="button"
+        onClick={() => onDelete(bookmark.id)}
+        disabled={isDeleting}
+        aria-label={`「${name}」を削除`}
+        className={overlayButtonClass}
+      >
+        del
+      </button>
+    </div>
   );
 }
 
-function ArchiveCard({bookmark, onDelete, isDeleting, selectedTagIds, onToggleTag}: ItemProps) {
+function ArchiveCard({bookmark, onDelete, onEdit, isDeleting, selectedTagIds, onToggleTag}: ItemProps) {
   return (
     <article className="group relative flex h-full flex-col bg-panel transition-colors duration-300 hover:bg-raise">
       <div className="relative aspect-[16/10] overflow-hidden bg-raise">
@@ -383,7 +619,12 @@ function ArchiveCard({bookmark, onDelete, isDeleting, selectedTagIds, onToggleTa
         </span>
 
         <div className="absolute right-2 top-2 z-10 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100">
-          <DeleteButton bookmark={bookmark} onDelete={onDelete} isDeleting={isDeleting} />
+          <ItemActions
+            bookmark={bookmark}
+            onDelete={onDelete}
+            onEdit={onEdit}
+            isDeleting={isDeleting}
+          />
         </div>
       </div>
 
@@ -429,7 +670,7 @@ function ArchiveCard({bookmark, onDelete, isDeleting, selectedTagIds, onToggleTa
   );
 }
 
-function ArchiveRow({bookmark, onDelete, isDeleting, selectedTagIds, onToggleTag}: ItemProps) {
+function ArchiveRow({bookmark, onDelete, onEdit, isDeleting, selectedTagIds, onToggleTag}: ItemProps) {
   const [cover] = bookmark.thumbnails;
 
   return (
@@ -488,7 +729,12 @@ function ArchiveRow({bookmark, onDelete, isDeleting, selectedTagIds, onToggleTag
       </div>
 
       <div className="shrink-0 pr-1 pt-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-        <DeleteButton bookmark={bookmark} onDelete={onDelete} isDeleting={isDeleting} />
+        <ItemActions
+          bookmark={bookmark}
+          onDelete={onDelete}
+          onEdit={onEdit}
+          isDeleting={isDeleting}
+        />
       </div>
     </article>
   );
