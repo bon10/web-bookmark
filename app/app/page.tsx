@@ -28,7 +28,9 @@ export default async function Home() {
   const [bookmarksResult, tagsResult] = await Promise.all([
     supabase
       .from('videos')
-      .select('id, title, video_url, rating, video_tags(tags(id, name)), thumbnails(id, thumbnail_path)')
+      .select(
+        'id, title, video_url, rating, sort_order, created_at, video_tags(tags(id, name)), thumbnails(id, thumbnail_path)',
+      )
       .order('sort_order', {ascending: true}),
     supabase.from('tags').select('name').order('name', {ascending: true}),
   ]);
@@ -49,6 +51,8 @@ export default async function Home() {
     title: row.title,
     url: row.video_url,
     rating: row.rating,
+    createdAt: row.created_at,
+    sortOrder: row.sort_order,
     tags: row.video_tags.flatMap((videoTag) => (videoTag.tags ? [videoTag.tags] : [])),
     thumbnails: row.thumbnails.map((thumbnail) => ({
       id: thumbnail.id,
@@ -65,7 +69,7 @@ export default async function Home() {
         <div className="lg:sticky lg:top-[88px]">
           <AddBookmarkForm tagSuggestions={tagSuggestions} />
         </div>
-        <BookmarkArchive bookmarks={bookmarks} />
+        <BookmarkArchive bookmarks={bookmarks} tagSuggestions={tagSuggestions} />
       </div>
     </Shell>
   );

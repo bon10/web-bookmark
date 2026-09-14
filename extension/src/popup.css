@@ -1,0 +1,407 @@
+/* 意匠はアプリ（docs/design-system.md）に合わせる。色の値は app/styles/globals.css の
+   トークンと同じものを写している。拡張からアプリの淡／濃の選択は読めないため、
+   ここでは OS の設定（prefers-color-scheme）に従う。 */
+
+:root {
+  color-scheme: light;
+
+  --ink: 247 245 239;
+  --panel: 255 254 250;
+  --raise: 240 237 229;
+  --line: 214 208 196;
+  --text: 26 24 22;
+  --dim: 92 87 80;
+  --faint: 120 113 104;
+  --shu: 199 48 29;
+  --shu-lit: 160 33 18;
+
+  --sans: 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', 'BIZ UDPGothic', 'Yu Gothic Medium',
+    Meiryo, system-ui, sans-serif;
+  --display: 'Hiragino Mincho ProN', YuMincho, 'BIZ UDPMincho', serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --ink: 11 12 14;
+    --panel: 17 19 23;
+    --raise: 23 26 31;
+    --line: 38 42 49;
+    --text: 236 233 227;
+    --dim: 154 160 168;
+    --faint: 104 110 118;
+    --shu: 228 70 46;
+    --shu-lit: 255 122 94;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 420px;
+  margin: 0;
+  padding: 0 0 14px;
+  background: rgb(var(--ink));
+  color: rgb(var(--text));
+  font-family: var(--sans);
+  font-size: 13px;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgb(var(--line));
+  background: rgb(var(--panel));
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.bar h1 {
+  flex: 1;
+  margin: 0;
+  font-family: var(--display);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+/* 朱の角印。アプリの Seal と同じ役回りの印。 */
+.seal {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgb(var(--shu));
+  color: rgb(var(--shu));
+  font-family: var(--display);
+  font-size: 12px;
+  transform: rotate(-5deg);
+}
+
+section,
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+}
+
+.field {
+  display: block;
+}
+
+.field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.kicker {
+  display: block;
+  color: rgb(var(--faint));
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.count {
+  color: rgb(var(--faint));
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+input[type='text'],
+input[type='url'],
+input[type='email'],
+input[type='password'],
+input[type='number'] {
+  width: 100%;
+  margin-top: 7px;
+  padding: 7px 9px;
+  border: 1px solid rgb(var(--line));
+  border-radius: 2px;
+  background: rgb(var(--raise) / 0.5);
+  color: rgb(var(--text));
+  font-family: inherit;
+  font-size: 13px;
+}
+
+input:focus {
+  border-color: rgb(var(--shu));
+  background: rgb(var(--raise));
+  outline: none;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+button {
+  border: 1px solid rgb(var(--line));
+  border-radius: 2px;
+  background: transparent;
+  color: rgb(var(--text));
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: rgb(var(--shu));
+  color: rgb(var(--shu-lit));
+}
+
+button.primary {
+  border-color: rgb(var(--shu));
+  background: rgb(var(--shu));
+  color: #fff;
+  padding: 9px 12px;
+  font-size: 13px;
+}
+
+button.primary:hover {
+  background: rgb(var(--shu-lit));
+  color: #fff;
+}
+
+button.primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.actions .primary {
+  flex: 1;
+}
+
+.notice {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 2px solid rgb(var(--line));
+  background: rgb(var(--raise) / 0.6);
+  color: rgb(var(--dim));
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.notice.error {
+  border-left-color: rgb(var(--shu));
+  color: rgb(var(--shu-lit));
+}
+
+.notice.warn {
+  border-left-color: rgb(var(--shu));
+}
+
+.notice.done {
+  border-left-color: rgb(var(--shu));
+  color: rgb(var(--text));
+}
+
+/* 既にある可能性のあるブックマークの一覧 */
+.matches {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.matches li {
+  padding: 4px 0;
+  border-top: 1px solid rgb(var(--line));
+}
+
+.matches .title {
+  display: block;
+  color: rgb(var(--text));
+  font-size: 12px;
+}
+
+.matches .url {
+  display: block;
+  color: rgb(var(--faint));
+  font-family: var(--mono);
+  font-size: 10px;
+  word-break: break-all;
+}
+
+.matches .how {
+  color: rgb(var(--shu-lit));
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.hint {
+  margin: 7px 0 0;
+  color: rgb(var(--faint));
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+/* --- 評価 --- */
+.stars {
+  display: flex;
+  gap: 2px;
+  margin-top: 7px;
+}
+
+.star {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: rgb(var(--line));
+  font-size: 20px;
+  line-height: 1;
+}
+
+.star:hover {
+  border: none;
+}
+
+.star .fill {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: rgb(var(--shu));
+  white-space: nowrap;
+}
+
+/* --- タグ --- */
+.tag-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  padding: 6px;
+  border: 1px solid rgb(var(--line));
+  background: rgb(var(--raise) / 0.5);
+}
+
+.tag-box input {
+  flex: 1;
+  min-width: 7rem;
+  margin: 0;
+  padding: 3px;
+  border: none;
+  background: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid rgb(var(--shu) / 0.5);
+  color: rgb(var(--shu-lit));
+  font-size: 11px;
+}
+
+.chip button {
+  padding: 0 2px;
+  border: none;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.suggestions {
+  max-height: 170px;
+  margin: 4px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  border: 1px solid rgb(var(--line));
+  background: rgb(var(--panel));
+  list-style: none;
+}
+
+.suggestions li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 9px;
+  color: rgb(var(--dim));
+  cursor: pointer;
+}
+
+.suggestions li[aria-selected='true'] {
+  background: rgb(var(--shu) / 0.14);
+  color: rgb(var(--shu-lit));
+}
+
+/* --- サムネイル候補 --- */
+.thumbs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.thumb {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  padding: 0;
+  border: 1px solid rgb(var(--line));
+  background: rgb(var(--raise));
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.thumb[aria-pressed='true'] {
+  border-color: rgb(var(--shu));
+  outline: 1px solid rgb(var(--shu));
+}
+
+.thumb .order {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  min-width: 17px;
+  padding: 1px 3px;
+  background: rgb(var(--shu));
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: center;
+}
+
+.thumb .origin {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding: 1px 4px;
+  background: rgb(var(--panel) / 0.85);
+  color: rgb(var(--faint));
+  font-family: var(--mono);
+  font-size: 9px;
+}
