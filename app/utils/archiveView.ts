@@ -7,31 +7,34 @@
 // 絞り込みの語とタグは覚えない。次に開いたときも絞り込まれたままだと、
 // 書架から本が消えたように見えてしまうため。
 
-export type SortKey = 'order' | 'created' | 'rating';
+// 表示順（videos.sort_order）は並べ替えの基準から一旦外している。
+// 編集フォームの項目としては残っているので、値そのものは引き続き持つ。
+export type SortKey = 'created' | 'rating' | 'updated';
 export type SortDir = 'asc' | 'desc';
 export type ViewMode = 'grid' | 'list';
 
 export const SORT_OPTIONS: {key: SortKey; label: string}[] = [
-  {key: 'order', label: '表示順'},
   {key: 'created', label: '追加順'},
   {key: 'rating', label: '評価順'},
+  {key: 'updated', label: '更新順'},
 ];
 
-export const DEFAULT_SORT_KEY: SortKey = 'order';
+export const DEFAULT_SORT_KEY: SortKey = 'created';
+
+/**
+ * 並べ替えの既定の向き。3つの基準はいずれも「新しい方・高い方を先に見たい」ので降順から始める。
+ */
+export const DEFAULT_SORT_DIR: SortDir = 'desc';
+
 export const DEFAULT_VIEW_MODE: ViewMode = 'grid';
 
 // テーマの記憶（utils/theme.ts）と同じ命名にそろえる。
 export const ARCHIVE_VIEW_STORAGE_KEY = 'tube-bookmark:archive-view';
 
 /**
- * 並べ替えの既定の向き。表示順は自分で付けた番号の小さい方から、
- * 追加順と評価順は「新しい方・高い方を先に見たい」ので降順から始める。
+ * 読めない値は null。URL にも localStorage にも手で書かれた値が入りうるため、必ず通す。
+ * 旧既定の `order`（表示順）もここで落ち、既定の追加順に読み替わる。
  */
-export function defaultDirFor(sortKey: SortKey): SortDir {
-  return sortKey === 'order' ? 'asc' : 'desc';
-}
-
-/** 読めない値は null。URL にも localStorage にも手で書かれた値が入りうるため、必ず通す。 */
 export function parseSortKey(value: unknown): SortKey | null {
   return SORT_OPTIONS.some((option) => option.key === value) ? (value as SortKey) : null;
 }

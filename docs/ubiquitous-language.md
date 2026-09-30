@@ -66,7 +66,15 @@ Chrome 拡張がページから集めてきた画像、および動画から抜�
 
 ### 表示順（Sort order）
 
-一覧の並び順を決める整数。マスタ（`videos.sort_order`）。未指定は 0。
+利用者が1件ずつ手で付ける整数。マスタ（`videos.sort_order`）。未指定は 0。
+
+**一覧の並べ替えの基準からは一旦外している。** 入力は編集フォームに残っているので値は引き続き持つが、書架の並べ替えボタンには出さない。
+
+### 追加日 / 更新日
+
+1件が書架に納まった日（`videos.created_at`）と、最後に書き換えられた日（`videos.updated_at`）。どちらも登録・編集の処理がサーバー側で入れる（`app/utils/bookmarks.ts`）ので、利用者は直接編集しない。
+
+一覧では**日付だけを日本時間で出す**（時刻は出さない）。タイムゾーンを固定するのは、一覧がサーバー側でも描かれるため。実行環境まかせにするとサーバー（UTC）とブラウザで日付が1日ずれる。
 
 ### URL の表示
 
@@ -96,12 +104,14 @@ Chrome 拡張がページから集めてきた画像、および動画から抜�
 
 ### 並べ替え
 
-一覧の並び順の指定。基準は**表示順・追加順・評価順**の3つで、それぞれ昇順・降順を切り替える。同じ基準をもう一度押すと向きが入れ替わる。
+一覧の並び順の指定。基準は**追加順・評価順・更新順**の3つで、それぞれ昇順・降順を切り替える。同じ基準をもう一度押すと向きが入れ替わる。
 
-- 既定は「表示順の昇順」（`videos.sort_order` の小さい順）。従来の並びをそのまま既定に残している
-- 追加順は `videos.created_at`、評価順は `videos.rating`
+- 既定は「追加順の降順」＝**あとから納めたものが先**。書架を開いたとき、直近に納めた1件が目に入るようにするため
+- 追加順は `videos.created_at`、評価順は `videos.rating`、更新順は `videos.updated_at`
+- 3つとも降順から始める。いずれも「新しい方・高い方を先に見たい」ため
 - **未評価（`rating` が null）は昇順でも降順でも末尾に置く。** 比べる値が無いため
-- 同じ値のときは `id` の昇順で固定する。並べ替えのたびに順番が揺れないようにするため
+- 基準の値が同じときは `id` で決める。**向きは基準に合わせる**（降順なら `id` も降順）。まとめて登録して `created_at` が全件同じになっている場合でも、昇順と降順で同じ並びにならないようにするため。`id` は重複しないので並びは揺れない
+- **表示順（`videos.sort_order`）は基準から一旦外している**（前掲「表示順」を参照）
 
 **使わない語**：ソート（「絞り込み」と同じく和語に揃える）。ただし `videos.sort_order` を指す UI ラベルは従来どおり `Sort order`。
 
@@ -119,8 +129,8 @@ Chrome 拡張がページから集めてきた画像、および動画から抜�
 | --- | --- | --- |
 | `q` | 絞り込みの検索語 | 絞り込みなし |
 | `tags` | 絞り込むタグの id（カンマ区切り、AND） | 絞り込みなし |
-| `sort` | `order` / `created` / `rating` | `order`（表示順） |
-| `dir` | `asc` / `desc` | 表示順は `asc`、追加順と評価順は `desc` |
+| `sort` | `created` / `rating` / `updated` | `created`（追加順） |
+| `dir` | `asc` / `desc` | `desc`（3つの基準とも） |
 | `page` | ページ番号（**1 始まり**。内部は 0 始まり） | 1 ページ目 |
 | `view` | `list`（一覧形式） | `grid` |
 | `edit` | 編集中のブックマークの id | 編集していない |
@@ -156,7 +166,9 @@ URL に指定があるときは記憶より URL を優先する。共有され�
 | 評価 | Rating（欧文小ラベル） | `Bookmark.rating` | `videos.rating` |
 | タグ | Tags（欧文小ラベル） | `Bookmark.tags` | `tags` × `video_tags` |
 | サムネイル | Thumbnails（欧文小ラベル） | `Bookmark.thumbnails`, `ThumbnailCarousel` | `thumbnails` ＋ R2 |
-| 表示順 | Sort order（欧文小ラベル） | `sort_order`（フォーム項目名） | `videos.sort_order` |
+| 表示順 | Sort order（欧文小ラベル、編集フォームのみ） | `sort_order`（フォーム項目名） | `videos.sort_order` |
+| 追加日 | 追加日 | `Bookmark.createdAt`, `BookmarkDates` | `videos.created_at` |
+| 更新日 | 更新日 | `Bookmark.updatedAt`, `BookmarkDates` | `videos.updated_at` |
 | 表示テーマ | auto / light / dark | `ThemeMode`, `ResolvedTheme` | `localStorage` ＋ OS 設定 |
 
 ---
