@@ -29,9 +29,10 @@ export default async function Home() {
     supabase
       .from('videos')
       .select(
-        'id, title, video_url, rating, sort_order, created_at, video_tags(tags(id, name)), thumbnails(id, thumbnail_path)',
+        'id, title, video_url, rating, sort_order, created_at, updated_at, video_tags(tags(id, name)), thumbnails(id, thumbnail_path)',
       )
-      .order('sort_order', {ascending: true}),
+      // 並べ替えは一覧側（BookmarkArchive）で行うが、取得の順もその既定（追加順の降順）に合わせておく。
+      .order('created_at', {ascending: false}),
     supabase.from('tags').select('name').order('name', {ascending: true}),
   ]);
 
@@ -52,6 +53,7 @@ export default async function Home() {
     url: row.video_url,
     rating: row.rating,
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
     sortOrder: row.sort_order,
     tags: row.video_tags.flatMap((videoTag) => (videoTag.tags ? [videoTag.tags] : [])),
     thumbnails: row.thumbnails.map((thumbnail) => ({

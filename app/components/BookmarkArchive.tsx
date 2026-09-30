@@ -12,10 +12,10 @@ import ThumbnailCarousel from '@/components/ThumbnailCarousel';
 import EditBookmarkDialog from '@/components/EditBookmarkDialog';
 import {deleteBookmark} from '@/app/actions';
 import {
+  DEFAULT_SORT_DIR,
   DEFAULT_SORT_KEY,
   DEFAULT_VIEW_MODE,
   SORT_OPTIONS,
-  defaultDirFor,
   parseSortDir,
   parseSortKey,
   parseViewMode,
@@ -31,8 +31,10 @@ export type Bookmark = {
   title: string | null;
   url: string;
   rating: number | null;
-  /** 並べ替えの「追加順」に使う。ISO 8601 の文字列なので辞書順の比較で時刻順になる。 */
+  /** 一覧の「追加日」と並べ替えの「追加順」に使う。ISO 8601 の文字列なので辞書順の比較で時刻順になる。 */
   createdAt: string;
+  /** 一覧の「更新日」と並べ替えの「更新順」に使う。書き換えるたびに `videos.updated_at` が更新される。 */
+  updatedAt: string;
   sortOrder: number;
   tags: {id: number; name: string}[];
   thumbnails: {id: number; url: string}[];
@@ -64,7 +66,7 @@ export default function BookmarkArchive({
   // 戻る・進むで URL が変わったときに、画面がその状態へ素直に追従するようにするため。
   const selectedTagIds = useMemo(() => parseTagIds(searchParams.get('tags')), [searchParams]);
   const sortKey = parseSortKey(searchParams.get('sort')) ?? DEFAULT_SORT_KEY;
-  const sortDir = parseSortDir(searchParams.get('dir')) ?? defaultDirFor(sortKey);
+  const sortDir = parseSortDir(searchParams.get('dir')) ?? DEFAULT_SORT_DIR;
   const view = parseViewMode(searchParams.get('view')) ?? DEFAULT_VIEW_MODE;
   // URL では 1 始まり。内部は 0 始まりで持つ。
   const currentPage = Math.max(0, Number(searchParams.get('page') ?? '1') - 1);
@@ -138,22 +140,28 @@ export default function BookmarkArchive({
   const sorted = useMemo(() => {
     const factor = sortDir === 'asc' ? 1 : -1;
 
-    // 同値のときは id の昇順で固定し、並べ替えのたびに順番が揺れないようにする。
+    // 基準の値が同じときは id で決める。id は重複しないので、並べ替えのたびに順番が揺れることはない。
+    //
+    // 昇順で固定せず向きに合わせるのは、**同じ時刻・同じ評価のブックマークが多いときに
+    // 昇順と降順で同じ並びになってしまうのを避けるため**。とくに追加日・更新日は
+    // まとめて登録すると全件同じ時刻になりうるので、その場合は id の降順＝新しい順で出す。
+    const byId = (a: Bookmark, b: Bookmark) => factor * (a.id - b.id);
+
     return [...filtered].sort((a, b) => {
       if (sortKey === 'created') {
-        return factor * a.createdAt.localeCompare(b.createdAt) || a.id - b.id;
+        return factor * a.createdAt.localeCompare(b.createdAt) || byId(a, b);
       }
-      if (sortKey === 'rating') {
-        // 未評価は比べる値が無いので、昇順でも降順でも末尾に送る。
-        if (a.rating === null || b.rating === null) {
-          if (a.rating === b.rating) {
-            return a.id - b.id;
-          }
-          return a.rating === null ? 1 : -1;
+      if (sortKey === 'updated') {
+        return factor * a.updatedAt.localeCompare(b.updatedAt) || byId(a, b);
+      }
+      // ここから下は評価順。未評価は比べる値が無いので、昇順でも降順でも末尾に送る。
+      if (a.rating === null || b.rating === null) {
+        if (a.rating === b.rating) {
+          return byId(a, b);
         }
-        return factor * (a.rating - b.rating) || a.id - b.id;
+        return a.rating === null ? 1 : -1;
       }
-      return factor * (a.sortOrder - b.sortOrder) || a.id - b.id;
+      return factor * (a.rating - b.rating) || byId(a, b);
     });
   }, [filtered, sortKey, sortDir]);
 
@@ -221,7 +229,7 @@ export default function BookmarkArchive({
     if (storedSort !== DEFAULT_SORT_KEY) {
       updates.sort = storedSort;
     }
-    if (stored.dir && stored.dir !== defaultDirFor(storedSort)) {
+    if (stored.dir && stored.dir !== DEFAULT_SORT_DIR) {
       updates.dir = stored.dir;
     }
     if (stored.view && stored.view !== DEFAULT_VIEW_MODE) {
@@ -277,11 +285,11 @@ export default function BookmarkArchive({
    */
   function changeSort(nextKey: SortKey) {
     const nextDir: SortDir =
-      nextKey === sortKey ? (sortDir === 'asc' ? 'desc' : 'asc') : defaultDirFor(nextKey);
+      nextKey === sortKey ? (sortDir === 'asc' ? 'desc' : 'asc') : DEFAULT_SORT_DIR;
 
     writeParams({
       sort: nextKey === DEFAULT_SORT_KEY ? null : nextKey,
-      dir: nextDir === defaultDirFor(nextKey) ? null : nextDir,
+      dir: nextDir === DEFAULT_SORT_DIR ? null : nextDir,
       page: null,
     });
   }
@@ -561,6 +569,50 @@ function BookmarkUrl({url}: {url: string}) {
   );
 }
 
+/**
+ * 一覧に出す日付の書式。時刻は落として日付だけを出す。
+ *
+ * タイムゾーンを日本時間に固定するのは、この一覧がサーバー側でも描かれるため。
+ * 実行環境まかせにすると、サーバー（UTC）とブラウザ（利用者の設定）で日付が
+ * 1日ずれ、hydration の不一致になる。
+ */
+const archiveDateFormat = new Intl.DateTimeFormat('ja-JP', {
+  timeZone: 'Asia/Tokyo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+function formatArchiveDate(isoTimestamp: string): string {
+  return archiveDateFormat.format(new Date(isoTimestamp));
+}
+
+/** 1件の追加日と更新日。カードでは横に並べ、一覧形式では列に収めるため縦に積む。 */
+function BookmarkDates({
+  createdAt,
+  updatedAt,
+  stacked = false,
+}: {
+  createdAt: string;
+  updatedAt: string;
+  stacked?: boolean;
+}) {
+  return (
+    <div
+      className={`tnum font-mono text-[10px] leading-[1.7] text-faint ${
+        stacked ? 'flex flex-col' : 'flex flex-wrap gap-x-3'
+      }`}
+    >
+      <span>
+        追加日 <time dateTime={createdAt}>{formatArchiveDate(createdAt)}</time>
+      </span>
+      <span>
+        更新日 <time dateTime={updatedAt}>{formatArchiveDate(updatedAt)}</time>
+      </span>
+    </div>
+  );
+}
+
 type ItemProps = {
   bookmark: Bookmark;
   onDelete: (bookmarkId: number) => void;
@@ -647,6 +699,8 @@ function ArchiveCard({bookmark, onDelete, onEdit, isDeleting, selectedTagIds, on
           </div>
         )}
 
+        <BookmarkDates createdAt={bookmark.createdAt} updatedAt={bookmark.updatedAt} />
+
         {bookmark.tags.length > 0 && (
           <div className="mt-auto flex flex-wrap gap-1 pt-1">
             {bookmark.tags.map((tag) => (
@@ -717,6 +771,11 @@ function ArchiveRow({bookmark, onDelete, onEdit, isDeleting, selectedTagIds, onT
             onToggle={() => onToggleTag(tag.id)}
           />
         ))}
+      </div>
+
+      {/* 幅の狭い画面では、タイトルと URL を潰さないために日付の列を落とす。 */}
+      <div className="hidden w-[7.5rem] shrink-0 pt-0.5 md:block">
+        <BookmarkDates createdAt={bookmark.createdAt} updatedAt={bookmark.updatedAt} stacked />
       </div>
 
       <div className="hidden w-[6.5rem] shrink-0 items-center gap-2 pt-1 sm:flex">
